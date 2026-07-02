@@ -433,9 +433,9 @@ function drawOverlay(
 
   if (paused) {
     ctx.font = OVERLAY_TITLE_FONT
-    ctx.fillText('PAUSED', centerX, centerY - OVERLAY_LINE_GAP)
+    ctx.fillText(hud?.overlayTitle ?? 'PAUSED', centerX, centerY - OVERLAY_LINE_GAP)
     ctx.font = OVERLAY_LINE_FONT
-    ctx.fillText('Press P to resume', centerX, centerY + OVERLAY_LINE_GAP * 0.4)
+    ctx.fillText(hud?.overlayHint ?? 'Press P to resume', centerX, centerY + OVERLAY_LINE_GAP * 0.4)
     return
   }
 

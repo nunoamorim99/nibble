@@ -31,6 +31,13 @@ _Status: Phase 1 target — classic mode (keyboard only) once the renderer and
 `main.ts` loop land. Touch/swipe and pause are Phase 2; leave those items
 unchecked until then._
 
+### Ready gate (round start)
+
+- [ ] Opening the page shows a READY overlay with the snake holding still — the round does NOT run (or end) unattended before the first input
+- [ ] The first arrow key / WASD press (or swipe on mobile) starts the round AND steers the snake in that direction in one action
+- [ ] After a restart, a mode switch, or advancing to the next level, the new round again waits at READY for the first turn input
+- [ ] P/Escape and the Pause button do nothing while at READY (nothing to pause yet)
+
 ### Keyboard steering
 
 - [ ] Arrow keys change direction with no perceptible lag between keypress and the snake visibly turning

@@ -56,6 +56,9 @@ let activeTheme: Theme = classicTheme
 let mode: GameMode = { kind: 'classic' }
 let highestLevelUnlocked = 0
 let paused = false
+// Ready gate: a fresh round holds still until the player's first turn input,
+// so opening the page (or advancing a level) never runs the snake unattended.
+let awaitingStart = true
 let prev: GameState | null = null
 let accumulator = 0
 let lastTime = performance.now()
@@ -114,7 +117,7 @@ function toggleMute(): void {
 }
 
 function togglePause(): void {
-  if (state.status !== 'running') return
+  if (awaitingStart || state.status !== 'running') return
   paused = !paused
   accumulator = 0
   shell.setPaused(paused)
@@ -134,6 +137,7 @@ function requestRestart(force: boolean): void {
   }
   prev = null
   paused = false
+  awaitingStart = true
   accumulator = 0
   state = newGame()
   shell.setPaused(false)
@@ -279,9 +283,15 @@ function buildHud(): Hud {
     }
   }
 
+  const waiting = awaitingStart && state.status === 'running'
+  if (waiting) {
+    overlayTitle = 'READY'
+    overlayHint = 'Press an arrow key or swipe to start'
+  }
+
   return {
     highScore: mode.kind === 'classic' ? highScore : undefined,
-    paused,
+    paused: paused || waiting,
     levelLabel,
     overlayTitle,
     overlayHint,
@@ -293,7 +303,15 @@ function frame(now: number): void {
   const delta = now - lastTime
   lastTime = now
 
-  if (!paused && state.status === 'running') {
+  if (awaitingStart && state.status === 'running') {
+    const queued = input.takeTurn()
+    if (queued) {
+      awaitingStart = false
+      state = applyTurn(state, queued)
+    }
+  }
+
+  if (!paused && !awaitingStart && state.status === 'running') {
     accumulator = Math.min(accumulator + delta, MAX_FRAME_MS)
     while (accumulator >= tickMs && state.status === 'running') {
       const queued = input.takeTurn()
@@ -307,7 +325,9 @@ function frame(now: number): void {
   }
 
   const alpha =
-    !paused && state.status === 'running' ? Math.min(accumulator / tickMs, 1) : 1
+    !paused && !awaitingStart && state.status === 'running'
+      ? Math.min(accumulator / tickMs, 1)
+      : 1
   renderer.draw(prev, state, alpha, activeTheme, buildHud())
   requestAnimationFrame(frame)
 }
