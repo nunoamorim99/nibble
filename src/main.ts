@@ -17,7 +17,7 @@ import {
 import { LEVELS, levelToGameConfig } from './levels'
 import {
   SHOP_CATALOG,
-  createLocalAdapter,
+  createAdapter,
   grantCoinsForScore,
   isThemeUnlocked,
   purchaseItem,
@@ -46,7 +46,7 @@ if (!canvasEl) throw new Error('Canvas #game not found')
 const canvas: HTMLCanvasElement = canvasEl
 
 const renderer = createRenderer(canvas)
-const storage = createLocalAdapter()
+const storage = createAdapter()
 const sound = createSoundPlayer()
 
 let highScore = 0
