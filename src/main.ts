@@ -6,7 +6,7 @@ import {
   ticksPerSecond,
   type GameState,
 } from './engine'
-import { createRenderer } from './render'
+import { createRenderer, type Hud } from './render'
 import {
   DEFAULT_THEME_ID,
   classicTheme,
@@ -14,6 +14,7 @@ import {
   themeRegistry,
   type Theme,
 } from './themes'
+import { LEVELS, levelToGameConfig } from './levels'
 import {
   SHOP_CATALOG,
   createLocalAdapter,
@@ -24,8 +25,14 @@ import {
 import { createInputController, createUiShell, type ShopItemView, type ThemeOption } from './ui'
 
 const MODE_ID = 'classic'
+const MODE_CLASSIC = 'classic'
+const MODE_LEVELS = 'levels'
 const MAX_FRAME_MS = 250
 const SETTING_THEME = 'theme'
+const SETTING_MODE = 'mode'
+const SETTING_LEVEL_PROGRESS = 'levels:highest'
+
+type GameMode = { readonly kind: 'classic' } | { readonly kind: 'level'; readonly index: number }
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvasEl) throw new Error('Canvas #game not found')
@@ -34,37 +41,60 @@ const canvas: HTMLCanvasElement = canvasEl
 const renderer = createRenderer(canvas)
 const storage = createLocalAdapter()
 
-// Composition root: the engine forbids Math.random/Date.now inside update
-// logic, so the one place a fresh seed may be drawn is here, at game creation.
-function newGame(): GameState {
-  const seed = (Math.random() * 0xffffffff) >>> 0
-  return createInitialState({ ...CLASSIC_CONFIG, seed })
-}
-
 let highScore = 0
 let coins = 0
 let unlocks: readonly string[] = []
 let activeTheme: Theme = classicTheme
+let mode: GameMode = { kind: 'classic' }
+let highestLevelUnlocked = 0
 let paused = false
 let prev: GameState | null = null
-let state = newGame()
 let accumulator = 0
 let lastTime = performance.now()
+
+// Composition root: the engine forbids Math.random/Date.now inside update
+// logic, so the one place a fresh seed may be drawn is here, at game creation.
+function newGame(): GameState {
+  const seed = (Math.random() * 0xffffffff) >>> 0
+  if (mode.kind === 'level' && LEVELS.length > 0) {
+    const level = LEVELS[Math.min(mode.index, LEVELS.length - 1)]
+    return createInitialState(levelToGameConfig(level, seed))
+  }
+  return createInitialState({ ...CLASSIC_CONFIG, seed })
+}
+
+let state = newGame()
 
 void storage.getHighScore(MODE_ID).then((saved) => {
   highScore = Math.max(highScore, saved)
 })
 
+function currentLevelNumber(): number {
+  return mode.kind === 'level' ? mode.index + 1 : 0
+}
+
+function hasNextLevel(): boolean {
+  return mode.kind === 'level' && mode.index + 1 < LEVELS.length
+}
+
 function onRoundEnd(finished: GameState): void {
-  if (finished.score > highScore) {
-    highScore = finished.score
-    void storage.setHighScore(MODE_ID, finished.score)
+  if (mode.kind === 'classic') {
+    if (finished.score > highScore) {
+      highScore = finished.score
+      void storage.setHighScore(MODE_ID, finished.score)
+    }
+    if (finished.score > 0) shell.promptScoreSubmit(finished.score)
+  } else if (finished.status === 'won') {
+    const nextIndex = mode.index + 1
+    if (nextIndex < LEVELS.length && nextIndex > highestLevelUnlocked) {
+      highestLevelUnlocked = nextIndex
+      void storage.setSetting(SETTING_LEVEL_PROGRESS, String(nextIndex))
+    }
   }
   void grantCoinsForScore(storage, finished.score).then((balance) => {
     coins = balance
     shell.setCoins(balance)
   })
-  if (finished.score > 0) shell.promptScoreSubmit(finished.score)
 }
 
 function togglePause(): void {
@@ -74,13 +104,36 @@ function togglePause(): void {
   shell.setPaused(paused)
 }
 
+function updateLevelInfo(): void {
+  shell.setLevelInfo(
+    mode.kind === 'level' ? `LV ${currentLevelNumber()}/${LEVELS.length}` : null,
+  )
+}
+
 function requestRestart(force: boolean): void {
   if (!force && state.status === 'running') return
+  // A won level advances to the next one; everything else replays.
+  if (mode.kind === 'level' && state.status === 'won' && hasNextLevel()) {
+    mode = { kind: 'level', index: mode.index + 1 }
+  }
   prev = null
   paused = false
   accumulator = 0
   state = newGame()
   shell.setPaused(false)
+  updateLevelInfo()
+}
+
+function setMode(id: string, persist: boolean): void {
+  const wantLevels = id === MODE_LEVELS
+  if (wantLevels === (mode.kind === 'level')) {
+    shell.setActiveMode(id)
+    return
+  }
+  mode = wantLevels ? { kind: 'level', index: highestLevelUnlocked } : { kind: 'classic' }
+  shell.setActiveMode(wantLevels ? MODE_LEVELS : MODE_CLASSIC)
+  if (persist) void storage.setSetting(SETTING_MODE, wantLevels ? MODE_LEVELS : MODE_CLASSIC)
+  requestRestart(true)
 }
 
 function setTheme(id: string, persist: boolean): void {
@@ -126,14 +179,15 @@ function handlePurchase(itemId: string): void {
 const shell = createUiShell({
   adapter: storage,
   modeId: MODE_ID,
+  modes: [
+    { id: MODE_CLASSIC, name: 'Classic' },
+    { id: MODE_LEVELS, name: 'Levels' },
+  ],
+  activeModeId: MODE_CLASSIC,
+  onModeSelect: (id) => setMode(id, true),
   themes: themeOptions(),
   activeThemeId: DEFAULT_THEME_ID,
-  shopItems: SHOP_CATALOG.map((item) => ({
-    id: item.id,
-    name: item.name,
-    price: item.price,
-    owned: false,
-  })),
+  shopItems: shopItemViews(),
   onThemeSelect: (id) => {
     if (!isThemeUnlocked(id, unlocks)) return
     setTheme(id, true)
@@ -147,6 +201,16 @@ void storage.getSetting(SETTING_THEME).then((saved) => {
   if (saved) setTheme(saved, false)
 })
 void refreshEconomy()
+void Promise.all([
+  storage.getSetting(SETTING_MODE),
+  storage.getSetting(SETTING_LEVEL_PROGRESS),
+]).then(([savedMode, savedProgress]) => {
+  const parsed = Number.parseInt(savedProgress ?? '', 10)
+  if (Number.isFinite(parsed) && LEVELS.length > 0) {
+    highestLevelUnlocked = Math.min(Math.max(parsed, 0), LEVELS.length - 1)
+  }
+  if (savedMode === MODE_LEVELS) setMode(MODE_LEVELS, false)
+})
 
 const input = createInputController({
   swipeTarget: canvas,
@@ -168,6 +232,36 @@ function resizeCanvas(): void {
 new ResizeObserver(resizeCanvas).observe(canvas)
 resizeCanvas()
 
+function buildHud(): Hud {
+  const levelLabel =
+    mode.kind === 'level' && state.config.applesToAdvance !== null
+      ? `LEVEL ${currentLevelNumber()}  APPLES ${state.applesEaten}/${state.config.applesToAdvance}`
+      : undefined
+
+  let overlayTitle: string | undefined
+  let overlayHint: string | undefined
+  if (mode.kind === 'level') {
+    if (state.status === 'won') {
+      overlayTitle = hasNextLevel()
+        ? `LEVEL ${currentLevelNumber()} CLEAR`
+        : 'ALL LEVELS CLEAR'
+      overlayHint = hasNextLevel()
+        ? `Press Enter for Level ${currentLevelNumber() + 1}`
+        : 'Press Enter to replay'
+    } else if (state.status === 'gameover') {
+      overlayHint = 'Press Enter to retry'
+    }
+  }
+
+  return {
+    highScore: mode.kind === 'classic' ? highScore : undefined,
+    paused,
+    levelLabel,
+    overlayTitle,
+    overlayHint,
+  }
+}
+
 function frame(now: number): void {
   const tickMs = 1000 / ticksPerSecond(state.config)
   const delta = now - lastTime
@@ -187,7 +281,7 @@ function frame(now: number): void {
 
   const alpha =
     !paused && state.status === 'running' ? Math.min(accumulator / tickMs, 1) : 1
-  renderer.draw(prev, state, alpha, activeTheme, { highScore, paused })
+  renderer.draw(prev, state, alpha, activeTheme, buildHud())
   requestAnimationFrame(frame)
 }
 

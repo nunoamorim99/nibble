@@ -1,19 +1,24 @@
 /**
- * UI shell — the DOM chrome around the canvas: a control bar (pause/resume,
- * leaderboard, themes, shop, new game, coin counter), a themes panel, a shop
- * panel, a leaderboard overlay, and a score-submission dialog shown on game
- * over. Built entirely with `document.createElement` calls appended under
- * `#ui-root`; `index.html` stays declarative-minimal.
+ * UI shell — the DOM chrome around the canvas: a control bar (mode,
+ * pause/resume, leaderboard, themes, shop, new game, coin counter, level-info
+ * label), a mode panel, a themes panel, a shop panel, a leaderboard overlay,
+ * and a score-submission dialog shown on game over. Built entirely with
+ * `document.createElement` calls appended under `#ui-root`; `index.html`
+ * stays declarative-minimal.
  *
  * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
  * direct storage access, no engine imports beyond types re-exported from
- * `src/engine` elsewhere in this layer. Pause/restart/theme-select/purchase
- * are forwarded as abstract callbacks; this module never touches engine,
- * theme-registry, or economy internals itself — `ThemeOption` and
- * `ShopItemView` are plain display data owned by this layer. The shell
- * decides nothing about affordability, ownership, or unlocks: it renders
- * exactly the data it is given (via constructor opts or `updateThemes` /
- * `updateShop` / `setCoins`) and reports clicks upward.
+ * `src/engine` elsewhere in this layer. Pause/restart/mode-select/theme-select
+ * /purchase are forwarded as abstract callbacks; this module never touches
+ * engine, level, theme-registry, or economy internals itself — `ModeOption`,
+ * `ThemeOption`, and `ShopItemView` are plain display data owned by this
+ * layer. The shell knows nothing about what a mode *means* (level config,
+ * rules, engine wiring) — it only renders the option list and reports the
+ * selected id upward; the caller owns starting/restarting games. The shell
+ * decides nothing about affordability, ownership, or unlocks either: it
+ * renders exactly the data it is given (via constructor opts or
+ * `updateThemes` / `updateShop` / `setCoins` / `setActiveMode` /
+ * `setLevelInfo`) and reports clicks upward.
  */
 import type { PersistenceAdapter } from '../data'
 
@@ -23,6 +28,12 @@ const LOCK_MARKER = '\u{1F512}'
 
 /** Remembers the last-used initials for the lifetime of the module/session. */
 let lastInitials = DEFAULT_INITIALS
+
+/** Display-only mode entry for the mode-select panel. Opaque id to this layer. */
+export interface ModeOption {
+  readonly id: string
+  readonly name: string
+}
 
 /** Display-only theme entry for the theme-select panel; ladder order. */
 export interface ThemeOption {
@@ -45,6 +56,10 @@ export interface UiShell {
   setPaused(paused: boolean): void
   /** Reflect the active selection in the themes panel (updates the marked row / stored id even while closed). */
   setActiveTheme(id: string): void
+  /** Reflect the active selection in the mode panel and the bar button label. */
+  setActiveMode(id: string): void
+  /** Set/replace the small non-interactive level-info bar label (e.g. "LV 3/8"); null hides it. */
+  setLevelInfo(text: string | null): void
   /** Update the coin counter in the control bar. */
   setCoins(balance: number): void
   /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
@@ -60,6 +75,9 @@ export interface UiShell {
 export function createUiShell(opts: {
   adapter: PersistenceAdapter
   modeId: string
+  modes: readonly ModeOption[]
+  activeModeId: string
+  onModeSelect(id: string): void
   themes: readonly ThemeOption[]
   activeThemeId: string
   shopItems: readonly ShopItemView[]
@@ -68,9 +86,11 @@ export function createUiShell(opts: {
   onPauseToggle(): void
   onRestart(): void
 }): UiShell {
-  const { adapter, modeId, onThemeSelect, onPurchase, onPauseToggle, onRestart } = opts
+  const { adapter, modeId, onModeSelect, onThemeSelect, onPurchase, onPauseToggle, onRestart } = opts
+  let modes = opts.modes
   let themes = opts.themes
   let shopItems = opts.shopItems
+  let activeModeId = opts.activeModeId
   let activeThemeId = opts.activeThemeId
 
   injectStyles()
@@ -81,6 +101,11 @@ export function createUiShell(opts: {
   // --- control bar ---------------------------------------------------
   const bar = document.createElement('div')
   bar.className = 'nibble-bar'
+
+  const modeButton = document.createElement('button')
+  modeButton.type = 'button'
+  modeButton.className = 'nibble-btn'
+  modeButton.addEventListener('click', () => openModes())
 
   const pauseButton = document.createElement('button')
   pauseButton.type = 'button'
@@ -116,13 +141,20 @@ export function createUiShell(opts: {
   coinCounter.className = 'nibble-coin-counter'
   coinCounter.setAttribute('aria-label', 'Coin balance')
 
+  const levelInfoLabel = document.createElement('span')
+  levelInfoLabel.className = 'nibble-level-info'
+  levelInfoLabel.setAttribute('aria-label', 'Level info')
+  levelInfoLabel.hidden = true
+
   bar.append(
+    modeButton,
     pauseButton,
     leaderboardButton,
     themesButton,
     shopButton,
     restartButton,
     coinCounter,
+    levelInfoLabel,
   )
   root.appendChild(bar)
 
@@ -130,6 +162,93 @@ export function createUiShell(opts: {
     coinCounter.textContent = `◉ ${balance}`
   }
   renderCoinCounter(0)
+
+  function findModeName(id: string): string {
+    return modes.find((mode) => mode.id === id)?.name ?? id
+  }
+
+  function syncModeButtonLabel(): void {
+    modeButton.textContent = `MODE: ${findModeName(activeModeId).toUpperCase()}`
+  }
+  syncModeButtonLabel()
+
+  // --- mode panel -------------------------------------------------------
+  const modesOverlay = document.createElement('div')
+  modesOverlay.className = 'nibble-overlay'
+  modesOverlay.hidden = true
+
+  const modesPanel = document.createElement('div')
+  modesPanel.className = 'nibble-panel'
+
+  const modesTitle = document.createElement('h2')
+  modesTitle.className = 'nibble-panel-title'
+  modesTitle.textContent = 'Mode'
+
+  const modesList = document.createElement('ol')
+  modesList.className = 'nibble-modes-list'
+
+  const modesCloseButton = document.createElement('button')
+  modesCloseButton.type = 'button'
+  modesCloseButton.className = 'nibble-btn'
+  modesCloseButton.textContent = 'Close'
+  modesCloseButton.addEventListener('click', () => closeModes())
+
+  modesPanel.append(modesTitle, modesList, modesCloseButton)
+  modesOverlay.appendChild(modesPanel)
+  root.appendChild(modesOverlay)
+
+  const modeRowButtons = new Map<string, HTMLButtonElement>()
+
+  function renderModeRows(): void {
+    modesList.replaceChildren()
+    modeRowButtons.clear()
+
+    if (modes.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'nibble-modes-empty'
+      empty.textContent = 'No modes available.'
+      modesList.appendChild(empty)
+      return
+    }
+
+    modes.forEach((mode) => {
+      const row = document.createElement('li')
+      row.className = 'nibble-modes-row'
+
+      const rowButton = document.createElement('button')
+      rowButton.type = 'button'
+      rowButton.className = 'nibble-mode-btn'
+      rowButton.addEventListener('click', () => {
+        onModeSelect(mode.id)
+        closeModes()
+      })
+
+      row.appendChild(rowButton)
+      modesList.appendChild(row)
+      modeRowButtons.set(mode.id, rowButton)
+    })
+
+    syncModeRowLabels()
+  }
+
+  function syncModeRowLabels(): void {
+    modes.forEach((mode) => {
+      const rowButton = modeRowButtons.get(mode.id)
+      if (!rowButton) return
+      const isActive = mode.id === activeModeId
+      rowButton.textContent = isActive ? `▶ ${mode.name}` : mode.name
+      rowButton.classList.toggle('nibble-mode-btn-active', isActive)
+    })
+  }
+
+  function openModes(): void {
+    renderModeRows()
+    modesOverlay.hidden = false
+  }
+
+  function closeModes(): void {
+    modesOverlay.hidden = true
+  }
 
   // --- leaderboard overlay -------------------------------------------
   const leaderboardOverlay = document.createElement('div')
@@ -441,6 +560,22 @@ export function createUiShell(opts: {
       syncThemeRowLabels()
     },
 
+    setActiveMode(id) {
+      activeModeId = id
+      syncModeButtonLabel()
+      syncModeRowLabels()
+    },
+
+    setLevelInfo(text) {
+      if (text === null) {
+        levelInfoLabel.hidden = true
+        levelInfoLabel.textContent = ''
+        return
+      }
+      levelInfoLabel.hidden = false
+      levelInfoLabel.textContent = text
+    },
+
     setCoins(balance) {
       renderCoinCounter(balance)
     },
@@ -466,6 +601,7 @@ export function createUiShell(opts: {
 
     dispose() {
       bar.remove()
+      modesOverlay.remove()
       leaderboardOverlay.remove()
       themesOverlay.remove()
       shopOverlay.remove()
@@ -522,6 +658,16 @@ function injectStyles(): void {
       letter-spacing: 0.05em;
       user-select: none;
     }
+    .nibble-level-info {
+      display: inline-flex;
+      align-items: center;
+      color: #c4cfa1;
+      padding: 0.4rem 0.25rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      user-select: none;
+    }
     .nibble-overlay {
       position: fixed;
       inset: 0;
@@ -568,6 +714,47 @@ function injectStyles(): void {
       text-align: center;
       opacity: 0.7;
       padding: 0.5rem 0;
+    }
+    .nibble-modes-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+    .nibble-modes-row {
+      display: flex;
+    }
+    .nibble-modes-empty {
+      text-align: center;
+      opacity: 0.7;
+      padding: 0.5rem 0;
+    }
+    .nibble-mode-btn {
+      flex: 1;
+      background: #1a1c16;
+      color: #c4cfa1;
+      border: 1px solid #c4cfa1;
+      border-radius: 2px;
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+      text-align: left;
+      cursor: pointer;
+    }
+    .nibble-mode-btn:hover,
+    .nibble-mode-btn:focus-visible {
+      background: #2a2d22;
+      outline: none;
+    }
+    .nibble-mode-btn-active {
+      border-color: #e8f0c4;
+      color: #e8f0c4;
+      font-weight: bold;
     }
     .nibble-themes-list {
       list-style: none;

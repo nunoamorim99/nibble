@@ -10,9 +10,14 @@ import type { Theme } from '../themes'
 
 /** Read-only HUD data supplied by the caller; the renderer never computes it. */
 export interface Hud {
-  readonly highScore: number
+  readonly highScore?: number
   /** Loop-level pause flag (pause is not engine state); drawn as an overlay. */
   readonly paused?: boolean
+  /** Optional top-center label (e.g. level progress); text is caller-composed. */
+  readonly levelLabel?: string
+  /** Optional overrides for the round-end overlay text (display data only). */
+  readonly overlayTitle?: string
+  readonly overlayHint?: string
 }
 
 /** A themed, stateless-per-call drawer bound to one canvas. */
@@ -273,9 +278,14 @@ function drawHud(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, next:
   ctx.textAlign = 'left'
   ctx.fillText(`SCORE ${Math.floor(next.score)}`, HUD_MARGIN, HUD_MARGIN)
 
-  if (hud) {
+  if (hud?.highScore !== undefined) {
     ctx.textAlign = 'right'
     ctx.fillText(`HI ${Math.floor(hud.highScore)}`, canvas.width - HUD_MARGIN, HUD_MARGIN)
+  }
+
+  if (hud?.levelLabel) {
+    ctx.textAlign = 'center'
+    ctx.fillText(hud.levelLabel, Math.round(canvas.width / 2), HUD_MARGIN)
   }
 }
 
@@ -308,14 +318,15 @@ function drawOverlay(
     return
   }
 
-  const title = next.status === 'won' ? 'YOU WIN' : 'GAME OVER'
+  const title = hud?.overlayTitle ?? (next.status === 'won' ? 'YOU WIN' : 'GAME OVER')
+  const hint = hud?.overlayHint ?? 'Press Enter to restart'
 
   ctx.font = OVERLAY_TITLE_FONT
   ctx.fillText(title, centerX, centerY - OVERLAY_LINE_GAP)
 
   ctx.font = OVERLAY_LINE_FONT
   ctx.fillText(`FINAL SCORE ${Math.floor(next.score)}`, centerX, centerY + OVERLAY_LINE_GAP * 0.4)
-  ctx.fillText('Press Enter to restart', centerX, centerY + OVERLAY_LINE_GAP * 1.6)
+  ctx.fillText(hint, centerX, centerY + OVERLAY_LINE_GAP * 1.6)
 }
 
 /** Create a `Renderer` bound to one canvas. Never reads or holds engine state between calls. */
