@@ -1049,6 +1049,12 @@ function injectStyles(): void {
         transition: transform 120ms ease;
       }
     }
+    /* The hidden attribute only maps to a UA-stylesheet display: none, which
+       author display rules (e.g. .nibble-overlay's flex) silently override —
+       without this reset every overlay renders permanently open. */
+    [hidden] {
+      display: none !important;
+    }
   `
   document.head.appendChild(style)
 }
