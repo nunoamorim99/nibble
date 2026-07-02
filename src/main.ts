@@ -7,12 +7,19 @@ import {
   type GameState,
 } from './engine'
 import { createRenderer } from './render'
-import { classicTheme } from './themes'
+import {
+  DEFAULT_THEME_ID,
+  classicTheme,
+  getThemeById,
+  themeRegistry,
+  type Theme,
+} from './themes'
 import { createLocalAdapter } from './data'
 import { createInputController, createUiShell } from './ui'
 
 const MODE_ID = 'classic'
 const MAX_FRAME_MS = 250
+const SETTING_THEME = 'theme'
 
 const canvasEl = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvasEl) throw new Error('Canvas #game not found')
@@ -29,6 +36,7 @@ function newGame(): GameState {
 }
 
 let highScore = 0
+let activeTheme: Theme = classicTheme
 let paused = false
 let prev: GameState | null = null
 let state = newGame()
@@ -63,11 +71,26 @@ function requestRestart(force: boolean): void {
   shell.setPaused(false)
 }
 
+function setTheme(id: string, persist: boolean): void {
+  const theme = getThemeById(id)
+  if (!theme) return
+  activeTheme = theme
+  shell.setActiveTheme(id)
+  if (persist) void storage.setSetting(SETTING_THEME, id)
+}
+
 const shell = createUiShell({
   adapter: storage,
   modeId: MODE_ID,
+  themes: themeRegistry.map((theme) => ({ id: theme.id, name: theme.name })),
+  activeThemeId: DEFAULT_THEME_ID,
+  onThemeSelect: (id) => setTheme(id, true),
   onPauseToggle: togglePause,
   onRestart: () => requestRestart(true),
+})
+
+void storage.getSetting(SETTING_THEME).then((saved) => {
+  if (saved) setTheme(saved, false)
 })
 
 const input = createInputController({
@@ -109,7 +132,7 @@ function frame(now: number): void {
 
   const alpha =
     !paused && state.status === 'running' ? Math.min(accumulator / tickMs, 1) : 1
-  renderer.draw(prev, state, alpha, classicTheme, { highScore, paused })
+  renderer.draw(prev, state, alpha, activeTheme, { highScore, paused })
   requestAnimationFrame(frame)
 }
 

@@ -5,6 +5,7 @@
  * draw so the game can be resized without the renderer or engine knowing.
  */
 import type { GameState, Vec2 } from '../engine'
+import { DIRECTION_VECTORS } from '../engine'
 import type { Theme } from '../themes'
 
 /** Read-only HUD data supplied by the caller; the renderer never computes it. */
@@ -100,7 +101,40 @@ function cellToRect(cell: Vec2, layout: Layout, inset: number): CellRect {
   return { x, y, size }
 }
 
-/** Fill one themed cell, honoring the theme's square/rounded cell style. */
+/** Width, in device pixels, of each bevel edge line. Kept subtle and cell-size-independent. */
+const BEVEL_LINE_WIDTH = 1
+
+/**
+ * Draw a subtle pixel bevel inside an already-filled cell: a translucent
+ * white line tracing the top+left edges (the "lit" side) and a translucent
+ * black line tracing the bottom+right edges (the "shadow" side). Purely
+ * decorative shading derived from white/black overlays — no extra theme
+ * color tokens required.
+ */
+function drawBevel(ctx: CanvasRenderingContext2D, rect: CellRect): void {
+  if (rect.size < 4) return // too small to read as a bevel; avoid muddying tiny cells
+
+  const half = BEVEL_LINE_WIDTH / 2
+  const inner = BEVEL_LINE_WIDTH
+
+  ctx.lineWidth = BEVEL_LINE_WIDTH
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
+  ctx.beginPath()
+  ctx.moveTo(rect.x + half, rect.y + rect.size - inner)
+  ctx.lineTo(rect.x + half, rect.y + half)
+  ctx.lineTo(rect.x + rect.size - inner, rect.y + half)
+  ctx.stroke()
+
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)'
+  ctx.beginPath()
+  ctx.moveTo(rect.x + inner, rect.y + rect.size - half)
+  ctx.lineTo(rect.x + rect.size - half, rect.y + rect.size - half)
+  ctx.lineTo(rect.x + rect.size - half, rect.y + inner)
+  ctx.stroke()
+}
+
+/** Fill one themed cell, honoring the theme's square/rounded cell style and optional bevel. */
 function fillCell(ctx: CanvasRenderingContext2D, rect: CellRect, theme: Theme, color: string): void {
   ctx.fillStyle = color
   if (theme.cell.shape === 'rounded') {
@@ -111,10 +145,24 @@ function fillCell(ctx: CanvasRenderingContext2D, rect: CellRect, theme: Theme, c
   } else {
     ctx.fillRect(rect.x, rect.y, rect.size, rect.size)
   }
+
+  if (theme.cell.bevel) drawBevel(ctx, rect)
 }
 
+/**
+ * Fill the canvas background — a vertical `backgroundGradient` when the
+ * theme supplies one, else the flat `background` color.
+ */
 function drawBackground(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, theme: Theme): void {
-  ctx.fillStyle = theme.colors.background
+  const gradientStops = theme.colors.backgroundGradient
+  if (gradientStops) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
+    gradient.addColorStop(0, gradientStops[0])
+    gradient.addColorStop(1, gradientStops[1])
+    ctx.fillStyle = gradient
+  } else {
+    ctx.fillStyle = theme.colors.background
+  }
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 }
 
@@ -162,7 +210,36 @@ function drawFood(ctx: CanvasRenderingContext2D, layout: Layout, food: Vec2 | nu
   fillCell(ctx, cellToRect(food, layout, theme.cell.inset), theme, theme.colors.food)
 }
 
-/** Draw the snake body first (all segments), then the head on top. */
+/** Fraction of the head cell's size used as the eye dot's radius. */
+const EYE_RADIUS_FRACTION = 0.12
+/** Fraction of the head cell's size the eye is offset from center toward the facing direction. */
+const EYE_OFFSET_FRACTION = 0.22
+
+/**
+ * Draw a small eye dot on the head cell, offset toward `direction` — a pure
+ * placement detail read from state for display only, deciding nothing about
+ * gameplay. No-op when the theme has no `eye` color.
+ */
+function drawEye(ctx: CanvasRenderingContext2D, rect: CellRect, direction: Vec2, theme: Theme): void {
+  const eyeColor = theme.colors.eye
+  if (!eyeColor) return
+
+  const centerX = rect.x + rect.size / 2
+  const centerY = rect.y + rect.size / 2
+  const offset = rect.size * EYE_OFFSET_FRACTION
+  const radius = Math.max(0.5, rect.size * EYE_RADIUS_FRACTION)
+
+  ctx.fillStyle = eyeColor
+  ctx.beginPath()
+  ctx.arc(centerX + direction.x * offset, centerY + direction.y * offset, radius, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+/**
+ * Draw the snake body first (all segments, alternating `snakeBody` /
+ * `snakeBodyAlt` by index when the theme supplies an alt color), then the
+ * head on top with an optional eye dot facing `next.direction`.
+ */
 function drawSnake(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
@@ -175,12 +252,16 @@ function drawSnake(
   const positions = next.snake.map((cell, index) =>
     resolveSegmentPosition(prevSnake?.[index], cell, alpha, theme.interpolate),
   )
+  const bodyAlt = theme.colors.snakeBodyAlt
 
   for (let index = positions.length - 1; index >= 1; index--) {
-    fillCell(ctx, cellToRect(positions[index], layout, theme.cell.inset), theme, theme.colors.snakeBody)
+    const color = bodyAlt && index % 2 === 1 ? bodyAlt : theme.colors.snakeBody
+    fillCell(ctx, cellToRect(positions[index], layout, theme.cell.inset), theme, color)
   }
   if (positions.length > 0) {
-    fillCell(ctx, cellToRect(positions[0], layout, theme.cell.inset), theme, theme.colors.snakeHead)
+    const headRect = cellToRect(positions[0], layout, theme.cell.inset)
+    fillCell(ctx, headRect, theme, theme.colors.snakeHead)
+    drawEye(ctx, headRect, DIRECTION_VECTORS[next.direction], theme)
   }
 }
 

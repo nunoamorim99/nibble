@@ -1,13 +1,17 @@
 /**
  * UI shell — the DOM chrome around the canvas: a control bar (pause/resume,
- * leaderboard, new game), a leaderboard overlay, and a score-submission
- * dialog shown on game over. Built entirely with `document.createElement`
- * calls appended under `#ui-root`; `index.html` stays declarative-minimal.
+ * themes, leaderboard, new game), a themes panel, a leaderboard overlay, and
+ * a score-submission dialog shown on game over. Built entirely with
+ * `document.createElement` calls appended under `#ui-root`; `index.html`
+ * stays declarative-minimal.
  *
  * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
  * direct storage access, no engine imports beyond types re-exported from
- * `src/engine` elsewhere in this layer. Pause/restart are forwarded as
- * abstract callbacks; this module never touches engine internals itself.
+ * `src/engine` elsewhere in this layer. Pause/restart/theme-select are
+ * forwarded as abstract callbacks; this module never touches engine or
+ * theme-registry internals itself — `ThemeOption` is plain display data
+ * owned by this layer, and the shell reports choices without deciding
+ * anything about themes.
  */
 import type { PersistenceAdapter } from '../data'
 
@@ -17,9 +21,17 @@ const DEFAULT_INITIALS = 'AAA'
 /** Remembers the last-used initials for the lifetime of the module/session. */
 let lastInitials = DEFAULT_INITIALS
 
+/** Display-only theme entry for the theme-select panel; ladder order. */
+export interface ThemeOption {
+  readonly id: string
+  readonly name: string
+}
+
 export interface UiShell {
   /** Reflect paused/running state on the pause button label. */
   setPaused(paused: boolean): void
+  /** Reflect the active selection in the themes panel (updates the marked row / stored id even while closed). */
+  setActiveTheme(id: string): void
   /** Game over with a positive score: open the initials-submit dialog. */
   promptScoreSubmit(score: number): void
   /** Remove all DOM this shell created and detach listeners. */
@@ -29,10 +41,14 @@ export interface UiShell {
 export function createUiShell(opts: {
   adapter: PersistenceAdapter
   modeId: string
+  themes: readonly ThemeOption[]
+  activeThemeId: string
+  onThemeSelect(id: string): void
   onPauseToggle(): void
   onRestart(): void
 }): UiShell {
-  const { adapter, modeId, onPauseToggle, onRestart } = opts
+  const { adapter, modeId, themes, onThemeSelect, onPauseToggle, onRestart } = opts
+  let activeThemeId = opts.activeThemeId
 
   injectStyles()
 
@@ -55,13 +71,19 @@ export function createUiShell(opts: {
   leaderboardButton.textContent = 'Leaderboard'
   leaderboardButton.addEventListener('click', () => openLeaderboard())
 
+  const themesButton = document.createElement('button')
+  themesButton.type = 'button'
+  themesButton.className = 'nibble-btn'
+  themesButton.textContent = 'Themes'
+  themesButton.addEventListener('click', () => openThemes())
+
   const restartButton = document.createElement('button')
   restartButton.type = 'button'
   restartButton.className = 'nibble-btn'
   restartButton.textContent = 'New Game'
   restartButton.addEventListener('click', () => onRestart())
 
-  bar.append(pauseButton, leaderboardButton, restartButton)
+  bar.append(pauseButton, leaderboardButton, themesButton, restartButton)
   root.appendChild(bar)
 
   // --- leaderboard overlay -------------------------------------------
@@ -130,6 +152,84 @@ export function createUiShell(opts: {
 
   function closeLeaderboard(): void {
     leaderboardOverlay.hidden = true
+  }
+
+  // --- themes panel -----------------------------------------------------
+  const themesOverlay = document.createElement('div')
+  themesOverlay.className = 'nibble-overlay'
+  themesOverlay.hidden = true
+
+  const themesPanel = document.createElement('div')
+  themesPanel.className = 'nibble-panel'
+
+  const themesTitle = document.createElement('h2')
+  themesTitle.className = 'nibble-panel-title'
+  themesTitle.textContent = 'Themes'
+
+  const themesList = document.createElement('ol')
+  themesList.className = 'nibble-themes-list'
+
+  const themesCloseButton = document.createElement('button')
+  themesCloseButton.type = 'button'
+  themesCloseButton.className = 'nibble-btn'
+  themesCloseButton.textContent = 'Close'
+  themesCloseButton.addEventListener('click', () => closeThemes())
+
+  themesPanel.append(themesTitle, themesList, themesCloseButton)
+  themesOverlay.appendChild(themesPanel)
+  root.appendChild(themesOverlay)
+
+  const themeRowButtons = new Map<string, HTMLButtonElement>()
+
+  function renderThemeRows(): void {
+    themesList.replaceChildren()
+    themeRowButtons.clear()
+
+    if (themes.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'nibble-themes-empty'
+      empty.textContent = 'No themes available.'
+      themesList.appendChild(empty)
+      return
+    }
+
+    themes.forEach((theme) => {
+      const row = document.createElement('li')
+      row.className = 'nibble-themes-row'
+
+      const rowButton = document.createElement('button')
+      rowButton.type = 'button'
+      rowButton.className = 'nibble-theme-btn'
+      rowButton.addEventListener('click', () => {
+        onThemeSelect(theme.id)
+        closeThemes()
+      })
+
+      row.appendChild(rowButton)
+      themesList.appendChild(row)
+      themeRowButtons.set(theme.id, rowButton)
+    })
+
+    syncThemeRowLabels()
+  }
+
+  function syncThemeRowLabels(): void {
+    themes.forEach((theme) => {
+      const rowButton = themeRowButtons.get(theme.id)
+      if (!rowButton) return
+      const isActive = theme.id === activeThemeId
+      rowButton.textContent = isActive ? `▶ ${theme.name}` : theme.name
+      rowButton.classList.toggle('nibble-theme-btn-active', isActive)
+    })
+  }
+
+  function openThemes(): void {
+    renderThemeRows()
+    themesOverlay.hidden = false
+  }
+
+  function closeThemes(): void {
+    themesOverlay.hidden = true
   }
 
   // --- score submit dialog --------------------------------------------
@@ -206,6 +306,11 @@ export function createUiShell(opts: {
       pauseButton.textContent = paused ? 'Resume' : 'Pause'
     },
 
+    setActiveTheme(id) {
+      activeThemeId = id
+      syncThemeRowLabels()
+    },
+
     promptScoreSubmit(score) {
       pendingScore = score
       submitScoreLine.textContent = `Score: ${score}`
@@ -218,6 +323,7 @@ export function createUiShell(opts: {
     dispose() {
       bar.remove()
       leaderboardOverlay.remove()
+      themesOverlay.remove()
       submitOverlay.remove()
     },
   }
@@ -305,6 +411,47 @@ function injectStyles(): void {
       text-align: center;
       opacity: 0.7;
       padding: 0.5rem 0;
+    }
+    .nibble-themes-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+    .nibble-themes-row {
+      display: flex;
+    }
+    .nibble-themes-empty {
+      text-align: center;
+      opacity: 0.7;
+      padding: 0.5rem 0;
+    }
+    .nibble-theme-btn {
+      flex: 1;
+      background: #1a1c16;
+      color: #c4cfa1;
+      border: 1px solid #c4cfa1;
+      border-radius: 2px;
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+      text-align: left;
+      cursor: pointer;
+    }
+    .nibble-theme-btn:hover,
+    .nibble-theme-btn:focus-visible {
+      background: #2a2d22;
+      outline: none;
+    }
+    .nibble-theme-btn-active {
+      border-color: #e8f0c4;
+      color: #e8f0c4;
+      font-weight: bold;
     }
     .nibble-score-line {
       margin: 0;

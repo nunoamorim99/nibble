@@ -71,4 +71,14 @@ export interface PersistenceAdapter {
    * client-reported score as-is.
    */
   submitScore(entry: LeaderboardEntry): Promise<void>
+
+  /**
+   * Free-form UI/app settings (e.g. the selected theme id). Values are
+   * opaque strings — callers JSON-encode structured values themselves
+   * before calling `setSetting` and decode after `getSetting`. Returns
+   * `null` if `key` has never been set.
+   */
+  getSetting(key: string): Promise<string | null>
+  /** Store an opaque string value under `key`. Overwrites any prior value. */
+  setSetting(key: string, value: string): Promise<void>
 }

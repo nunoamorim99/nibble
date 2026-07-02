@@ -22,6 +22,11 @@
  *       - `highscore:<modeId>` -> number
  *       - `coins`              -> number
  *       - `unlocks`            -> string[] (cosmetic ids)
+ *       - `setting:<key>`      -> string (opaque UI/app settings, e.g.
+ *                                 the selected theme id)
+ *
+ * `setting:<key>` reuses the `kv` store under its own key namespace — no
+ * new object store, so no `DB_VERSION` bump was needed to add it.
  *   - `leaderboard` store — one record per submitted entry, autoincrement
  *     primary key `id`, with an index on `modeId` for `getLeaderboard`
  *     lookups.
@@ -41,6 +46,10 @@ const LEADERBOARD_MODE_INDEX = 'modeId'
 const COINS_KEY = 'coins'
 const UNLOCKS_KEY = 'unlocks'
 const highScoreKey = (modeId: string): string => `highscore:${modeId}`
+// New key namespace within the existing `kv` store — see schema comment
+// above. Adding this needed no `onupgradeneeded` branch and no `DB_VERSION`
+// bump because it is not a new store, just new keys in an existing one.
+const settingKey = (key: string): string => `setting:${key}`
 
 const DEFAULT_LEADERBOARD_LIMIT = 10
 
@@ -139,6 +148,22 @@ async function addUnlockToDb(db: IDBDatabase, id: string): Promise<void> {
   if (set.has(id)) return
   set.add(id)
   await kvSet(db, UNLOCKS_KEY, Array.from(set))
+}
+
+async function getSettingFromDb(
+  db: IDBDatabase,
+  key: string,
+): Promise<string | null> {
+  const value = await kvGet<string>(db, settingKey(key))
+  return value ?? null
+}
+
+async function setSettingInDb(
+  db: IDBDatabase,
+  key: string,
+  value: string,
+): Promise<void> {
+  await kvSet(db, settingKey(key), value)
 }
 
 async function getLeaderboardFromDb(
@@ -279,6 +304,20 @@ export function createLocalAdapter(): PersistenceAdapter {
       const backend = await resolveBackend()
       if (backend.kind === 'memory') return backend.adapter.submitScore(entry)
       await submitScoreToDb(backend.db, entry)
+    },
+
+    async getSetting(key) {
+      const backend = await resolveBackend()
+      if (backend.kind === 'memory') return backend.adapter.getSetting(key)
+      return getSettingFromDb(backend.db, key)
+    },
+
+    async setSetting(key, value) {
+      const backend = await resolveBackend()
+      if (backend.kind === 'memory') {
+        return backend.adapter.setSetting(key, value)
+      }
+      await setSettingInDb(backend.db, key, value)
     },
   }
 }

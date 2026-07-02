@@ -17,6 +17,7 @@ export function createMemoryAdapter(): PersistenceAdapter {
   const highScores = new Map<string, number>()
   const unlocks = new Set<string>()
   const leaderboard: LeaderboardEntry[] = []
+  const settings = new Map<string, string>()
   let coins = 0
 
   return {
@@ -53,6 +54,14 @@ export function createMemoryAdapter(): PersistenceAdapter {
 
     async submitScore(entry) {
       leaderboard.push(entry)
+    },
+
+    async getSetting(key) {
+      return settings.get(key) ?? null
+    },
+
+    async setSetting(key, value) {
+      settings.set(key, value)
     },
   }
 }

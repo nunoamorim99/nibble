@@ -14,4 +14,4 @@ export { createInputController } from './input'
 export type { InputController } from './input'
 
 export { createUiShell } from './shell'
-export type { UiShell } from './shell'
+export type { ThemeOption, UiShell } from './shell'

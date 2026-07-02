@@ -25,6 +25,22 @@ export interface ThemeColors {
   readonly overlayText: string
   /** Overlay backdrop color — expected to be an `rgba()` string with alpha. */
   readonly overlayBackdrop: string
+  /**
+   * Optional second body color for a two-tone snake. When present, the
+   * renderer alternates `snakeBody` / `snakeBodyAlt` by segment index. Absent
+   * means a flat one-color body (every existing theme's current look).
+   */
+  readonly snakeBodyAlt?: string
+  /**
+   * Optional eye dot color drawn on the head cell. Absent means no eye is
+   * drawn (the classic faceless look).
+   */
+  readonly eye?: string
+  /**
+   * Optional vertical background gradient, `[top, bottom]`. When present it
+   * takes precedence over the flat `background` fill.
+   */
+  readonly backgroundGradient?: readonly [string, string]
 }
 
 /** How a single grid cell is shaped when filled. */
@@ -35,6 +51,13 @@ export interface ThemeCellStyle {
   readonly inset: number
   /** Corner radius as a fraction of the (inset) cell size; only used when `shape` is `'rounded'`. */
   readonly radius: number
+  /**
+   * Optional subtle pixel bevel: a lighter edge line along the top/left of
+   * the filled cell and a darker one along the bottom/right, drawn with
+   * translucent white/black strokes (no extra color tokens needed). Absent
+   * or `false` means a flat fill, matching every existing theme's look.
+   */
+  readonly bevel?: boolean
 }
 
 /**
