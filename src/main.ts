@@ -14,8 +14,14 @@ import {
   themeRegistry,
   type Theme,
 } from './themes'
-import { createLocalAdapter } from './data'
-import { createInputController, createUiShell } from './ui'
+import {
+  SHOP_CATALOG,
+  createLocalAdapter,
+  grantCoinsForScore,
+  isThemeUnlocked,
+  purchaseItem,
+} from './data'
+import { createInputController, createUiShell, type ShopItemView, type ThemeOption } from './ui'
 
 const MODE_ID = 'classic'
 const MAX_FRAME_MS = 250
@@ -36,6 +42,8 @@ function newGame(): GameState {
 }
 
 let highScore = 0
+let coins = 0
+let unlocks: readonly string[] = []
 let activeTheme: Theme = classicTheme
 let paused = false
 let prev: GameState | null = null
@@ -52,6 +60,10 @@ function onRoundEnd(finished: GameState): void {
     highScore = finished.score
     void storage.setHighScore(MODE_ID, finished.score)
   }
+  void grantCoinsForScore(storage, finished.score).then((balance) => {
+    coins = balance
+    shell.setCoins(balance)
+  })
   if (finished.score > 0) shell.promptScoreSubmit(finished.score)
 }
 
@@ -79,12 +91,54 @@ function setTheme(id: string, persist: boolean): void {
   if (persist) void storage.setSetting(SETTING_THEME, id)
 }
 
+function themeOptions(): readonly ThemeOption[] {
+  return themeRegistry.map((theme) => ({
+    id: theme.id,
+    name: theme.name,
+    locked: !isThemeUnlocked(theme.id, unlocks),
+  }))
+}
+
+function shopItemViews(): readonly ShopItemView[] {
+  return SHOP_CATALOG.map((item) => ({
+    id: item.id,
+    name: item.name,
+    price: item.price,
+    owned: unlocks.includes(item.id),
+  }))
+}
+
+async function refreshEconomy(): Promise<void> {
+  const [balance, owned] = await Promise.all([storage.getCoins(), storage.getUnlocks()])
+  coins = balance
+  unlocks = owned
+  shell.setCoins(coins)
+  shell.updateThemes(themeOptions())
+  shell.updateShop(shopItemViews())
+}
+
+function handlePurchase(itemId: string): void {
+  void purchaseItem(storage, itemId).then((result) => {
+    if (result.ok) void refreshEconomy()
+  })
+}
+
 const shell = createUiShell({
   adapter: storage,
   modeId: MODE_ID,
-  themes: themeRegistry.map((theme) => ({ id: theme.id, name: theme.name })),
+  themes: themeOptions(),
   activeThemeId: DEFAULT_THEME_ID,
-  onThemeSelect: (id) => setTheme(id, true),
+  shopItems: SHOP_CATALOG.map((item) => ({
+    id: item.id,
+    name: item.name,
+    price: item.price,
+    owned: false,
+  })),
+  onThemeSelect: (id) => {
+    if (!isThemeUnlocked(id, unlocks)) return
+    setTheme(id, true)
+  },
+  onPurchase: handlePurchase,
   onPauseToggle: togglePause,
   onRestart: () => requestRestart(true),
 })
@@ -92,6 +146,7 @@ const shell = createUiShell({
 void storage.getSetting(SETTING_THEME).then((saved) => {
   if (saved) setTheme(saved, false)
 })
+void refreshEconomy()
 
 const input = createInputController({
   swipeTarget: canvas,

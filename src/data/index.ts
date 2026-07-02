@@ -10,12 +10,25 @@
  * interface without any caller changes.
  *
  * Economy tuning numbers (points-per-coin conversion, item prices, spawn
- * rates) live in `src/data/economy.config.ts` (Phase 4) — never scattered
- * throughout the codebase. Unlocks recorded here are cosmetic only (themes,
- * skins); they must never grant a gameplay advantage.
+ * rates) live in `src/data/economy.config.ts` — never scattered throughout
+ * the codebase. `src/data/economy.ts` is the pure conversion/unlock logic
+ * plus purchase orchestration against a `PersistenceAdapter`. Unlocks
+ * recorded here are cosmetic only (themes, skins); they must never grant a
+ * gameplay advantage.
  *
  * No engine imports, no DOM beyond `indexedDB` itself, no UI.
  */
 export type { LeaderboardEntry, PersistenceAdapter } from './adapter'
 export { createLocalAdapter } from './local'
 export { createMemoryAdapter } from './memory'
+
+export type { ShopItem } from './economy.config'
+export { ECONOMY, SHOP_CATALOG } from './economy.config'
+export type { PurchaseResult } from './economy'
+export {
+  coinsForScore,
+  isThemeUnlocked,
+  getShopItem,
+  purchaseItem,
+  grantCoinsForScore,
+} from './economy'

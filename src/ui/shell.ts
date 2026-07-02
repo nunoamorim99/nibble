@@ -1,22 +1,25 @@
 /**
  * UI shell — the DOM chrome around the canvas: a control bar (pause/resume,
- * themes, leaderboard, new game), a themes panel, a leaderboard overlay, and
- * a score-submission dialog shown on game over. Built entirely with
- * `document.createElement` calls appended under `#ui-root`; `index.html`
- * stays declarative-minimal.
+ * leaderboard, themes, shop, new game, coin counter), a themes panel, a shop
+ * panel, a leaderboard overlay, and a score-submission dialog shown on game
+ * over. Built entirely with `document.createElement` calls appended under
+ * `#ui-root`; `index.html` stays declarative-minimal.
  *
  * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
  * direct storage access, no engine imports beyond types re-exported from
- * `src/engine` elsewhere in this layer. Pause/restart/theme-select are
- * forwarded as abstract callbacks; this module never touches engine or
- * theme-registry internals itself — `ThemeOption` is plain display data
- * owned by this layer, and the shell reports choices without deciding
- * anything about themes.
+ * `src/engine` elsewhere in this layer. Pause/restart/theme-select/purchase
+ * are forwarded as abstract callbacks; this module never touches engine,
+ * theme-registry, or economy internals itself — `ThemeOption` and
+ * `ShopItemView` are plain display data owned by this layer. The shell
+ * decides nothing about affordability, ownership, or unlocks: it renders
+ * exactly the data it is given (via constructor opts or `updateThemes` /
+ * `updateShop` / `setCoins`) and reports clicks upward.
  */
 import type { PersistenceAdapter } from '../data'
 
 const STYLE_ELEMENT_ID = 'nibble-ui-style'
 const DEFAULT_INITIALS = 'AAA'
+const LOCK_MARKER = '\u{1F512}'
 
 /** Remembers the last-used initials for the lifetime of the module/session. */
 let lastInitials = DEFAULT_INITIALS
@@ -25,6 +28,16 @@ let lastInitials = DEFAULT_INITIALS
 export interface ThemeOption {
   readonly id: string
   readonly name: string
+  /** When true, render with a lock marker; clicking the row does NOT call onThemeSelect. */
+  readonly locked?: boolean
+}
+
+/** Display-only shop entry for the shop panel. */
+export interface ShopItemView {
+  readonly id: string
+  readonly name: string
+  readonly price: number
+  readonly owned: boolean
 }
 
 export interface UiShell {
@@ -32,6 +45,12 @@ export interface UiShell {
   setPaused(paused: boolean): void
   /** Reflect the active selection in the themes panel (updates the marked row / stored id even while closed). */
   setActiveTheme(id: string): void
+  /** Update the coin counter in the control bar. */
+  setCoins(balance: number): void
+  /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
+  updateThemes(themes: readonly ThemeOption[]): void
+  /** Replace shop item states; re-renders in place if the shop panel is open. */
+  updateShop(items: readonly ShopItemView[]): void
   /** Game over with a positive score: open the initials-submit dialog. */
   promptScoreSubmit(score: number): void
   /** Remove all DOM this shell created and detach listeners. */
@@ -43,11 +62,15 @@ export function createUiShell(opts: {
   modeId: string
   themes: readonly ThemeOption[]
   activeThemeId: string
+  shopItems: readonly ShopItemView[]
   onThemeSelect(id: string): void
+  onPurchase(itemId: string): void
   onPauseToggle(): void
   onRestart(): void
 }): UiShell {
-  const { adapter, modeId, themes, onThemeSelect, onPauseToggle, onRestart } = opts
+  const { adapter, modeId, onThemeSelect, onPurchase, onPauseToggle, onRestart } = opts
+  let themes = opts.themes
+  let shopItems = opts.shopItems
   let activeThemeId = opts.activeThemeId
 
   injectStyles()
@@ -77,14 +100,36 @@ export function createUiShell(opts: {
   themesButton.textContent = 'Themes'
   themesButton.addEventListener('click', () => openThemes())
 
+  const shopButton = document.createElement('button')
+  shopButton.type = 'button'
+  shopButton.className = 'nibble-btn'
+  shopButton.textContent = 'Shop'
+  shopButton.addEventListener('click', () => openShop())
+
   const restartButton = document.createElement('button')
   restartButton.type = 'button'
   restartButton.className = 'nibble-btn'
   restartButton.textContent = 'New Game'
   restartButton.addEventListener('click', () => onRestart())
 
-  bar.append(pauseButton, leaderboardButton, themesButton, restartButton)
+  const coinCounter = document.createElement('span')
+  coinCounter.className = 'nibble-coin-counter'
+  coinCounter.setAttribute('aria-label', 'Coin balance')
+
+  bar.append(
+    pauseButton,
+    leaderboardButton,
+    themesButton,
+    shopButton,
+    restartButton,
+    coinCounter,
+  )
   root.appendChild(bar)
+
+  function renderCoinCounter(balance: number): void {
+    coinCounter.textContent = `◉ ${balance}`
+  }
+  renderCoinCounter(0)
 
   // --- leaderboard overlay -------------------------------------------
   const leaderboardOverlay = document.createElement('div')
@@ -200,7 +245,9 @@ export function createUiShell(opts: {
       const rowButton = document.createElement('button')
       rowButton.type = 'button'
       rowButton.className = 'nibble-theme-btn'
+      if (theme.locked) rowButton.disabled = true
       rowButton.addEventListener('click', () => {
+        if (theme.locked) return
         onThemeSelect(theme.id)
         closeThemes()
       })
@@ -218,8 +265,10 @@ export function createUiShell(opts: {
       const rowButton = themeRowButtons.get(theme.id)
       if (!rowButton) return
       const isActive = theme.id === activeThemeId
-      rowButton.textContent = isActive ? `▶ ${theme.name}` : theme.name
+      const label = theme.locked ? `${LOCK_MARKER} ${theme.name}` : theme.name
+      rowButton.textContent = isActive ? `▶ ${label}` : label
       rowButton.classList.toggle('nibble-theme-btn-active', isActive)
+      rowButton.classList.toggle('nibble-theme-btn-locked', Boolean(theme.locked))
     })
   }
 
@@ -230,6 +279,87 @@ export function createUiShell(opts: {
 
   function closeThemes(): void {
     themesOverlay.hidden = true
+  }
+
+  // --- shop panel -------------------------------------------------------
+  const shopOverlay = document.createElement('div')
+  shopOverlay.className = 'nibble-overlay'
+  shopOverlay.hidden = true
+
+  const shopPanel = document.createElement('div')
+  shopPanel.className = 'nibble-panel'
+
+  const shopTitle = document.createElement('h2')
+  shopTitle.className = 'nibble-panel-title'
+  shopTitle.textContent = 'Shop'
+
+  const shopList = document.createElement('ol')
+  shopList.className = 'nibble-shop-list'
+
+  const shopCloseButton = document.createElement('button')
+  shopCloseButton.type = 'button'
+  shopCloseButton.className = 'nibble-btn'
+  shopCloseButton.textContent = 'Close'
+  shopCloseButton.addEventListener('click', () => closeShop())
+
+  shopPanel.append(shopTitle, shopList, shopCloseButton)
+  shopOverlay.appendChild(shopPanel)
+  root.appendChild(shopOverlay)
+
+  let shopOpen = false
+
+  function renderShopRows(): void {
+    shopList.replaceChildren()
+
+    if (shopItems.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'nibble-shop-empty'
+      empty.textContent = 'No items available.'
+      shopList.appendChild(empty)
+      return
+    }
+
+    shopItems.forEach((item) => {
+      const row = document.createElement('li')
+      row.className = 'nibble-shop-row'
+
+      const name = document.createElement('span')
+      name.className = 'nibble-shop-name'
+      name.textContent = item.name
+
+      const price = document.createElement('span')
+      price.className = 'nibble-shop-price'
+      price.textContent = `◉ ${item.price}`
+
+      row.append(name, price)
+
+      if (item.owned) {
+        const ownedTag = document.createElement('span')
+        ownedTag.className = 'nibble-shop-owned'
+        ownedTag.textContent = 'OWNED'
+        row.appendChild(ownedTag)
+      } else {
+        const buyButton = document.createElement('button')
+        buyButton.type = 'button'
+        buyButton.className = 'nibble-btn nibble-shop-buy'
+        buyButton.textContent = 'Buy'
+        buyButton.addEventListener('click', () => onPurchase(item.id))
+        row.appendChild(buyButton)
+      }
+
+      shopList.appendChild(row)
+    })
+  }
+
+  function openShop(): void {
+    shopOpen = true
+    renderShopRows()
+    shopOverlay.hidden = false
+  }
+
+  function closeShop(): void {
+    shopOpen = false
+    shopOverlay.hidden = true
   }
 
   // --- score submit dialog --------------------------------------------
@@ -311,6 +441,20 @@ export function createUiShell(opts: {
       syncThemeRowLabels()
     },
 
+    setCoins(balance) {
+      renderCoinCounter(balance)
+    },
+
+    updateThemes(nextThemes) {
+      themes = nextThemes
+      if (!themesOverlay.hidden) renderThemeRows()
+    },
+
+    updateShop(items) {
+      shopItems = items
+      if (shopOpen) renderShopRows()
+    },
+
     promptScoreSubmit(score) {
       pendingScore = score
       submitScoreLine.textContent = `Score: ${score}`
@@ -324,6 +468,7 @@ export function createUiShell(opts: {
       bar.remove()
       leaderboardOverlay.remove()
       themesOverlay.remove()
+      shopOverlay.remove()
       submitOverlay.remove()
     },
   }
@@ -364,6 +509,18 @@ function injectStyles(): void {
       background: #c4cfa1;
       color: #1a1c16;
       outline: none;
+    }
+    .nibble-coin-counter {
+      display: inline-flex;
+      align-items: center;
+      background: #1a1c16;
+      color: #e8f0c4;
+      border: 1px solid #c4cfa1;
+      border-radius: 2px;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+      user-select: none;
     }
     .nibble-overlay {
       position: fixed;
@@ -452,6 +609,60 @@ function injectStyles(): void {
       border-color: #e8f0c4;
       color: #e8f0c4;
       font-weight: bold;
+    }
+    .nibble-theme-btn-locked {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .nibble-theme-btn-locked:hover,
+    .nibble-theme-btn-locked:focus-visible {
+      background: #1a1c16;
+    }
+    .nibble-shop-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+    .nibble-shop-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      border: 1px solid #c4cfa1;
+      border-radius: 2px;
+      padding: 0.4rem 0.6rem;
+    }
+    .nibble-shop-name {
+      flex: 1;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+    }
+    .nibble-shop-price {
+      font-size: 0.85rem;
+      color: #e8f0c4;
+      white-space: nowrap;
+    }
+    .nibble-shop-owned {
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      color: #1a1c16;
+      background: #c4cfa1;
+      border-radius: 2px;
+      padding: 0.3rem 0.5rem;
+      white-space: nowrap;
+    }
+    .nibble-shop-buy {
+      padding: 0.3rem 0.6rem;
+      font-size: 0.75rem;
+    }
+    .nibble-shop-empty {
+      text-align: center;
+      opacity: 0.7;
+      padding: 0.5rem 0;
     }
     .nibble-score-line {
       margin: 0;
