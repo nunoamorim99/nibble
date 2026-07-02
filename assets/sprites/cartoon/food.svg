@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>
+    <linearGradient id="cartoonBodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a6e84f" />
+      <stop offset="1" stop-color="#2f7d32" />
+    </linearGradient>
+    <linearGradient id="cartoonHeadGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9f066" />
+      <stop offset="1" stop-color="#3c9142" />
+    </linearGradient>
+    <radialGradient id="cartoonAppleGrad" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ff7a6e" />
+      <stop offset="0.55" stop-color="#e8392f" />
+      <stop offset="1" stop-color="#a8201a" />
+    </radialGradient>
+  </defs>
+    <ellipse cx="33" cy="37" rx="24" ry="22" fill="url(#cartoonAppleGrad)" />
+    <path d="M14,34 A20,22 0 0 1 33,15" stroke="#ff9c8f" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.6" />
+    <ellipse cx="24" cy="27" rx="6" ry="4" fill="#ffffff" opacity="0.55" />
+    <path d="M33,15 C33,8 29,5 29,5" stroke="#5a3a20" stroke-width="3.5" stroke-linecap="round" fill="none" />
+    <path d="M33,10 C40,4 50,8 47,16 C42,20 34,17 33,10 Z" fill="#3d8a28" />
+  </svg>

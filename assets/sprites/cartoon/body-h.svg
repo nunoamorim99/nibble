@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>
+    <linearGradient id="cartoonBodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a6e84f" />
+      <stop offset="1" stop-color="#2f7d32" />
+    </linearGradient>
+    <linearGradient id="cartoonHeadGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9f066" />
+      <stop offset="1" stop-color="#3c9142" />
+    </linearGradient>
+    <radialGradient id="cartoonAppleGrad" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ff7a6e" />
+      <stop offset="0.55" stop-color="#e8392f" />
+      <stop offset="1" stop-color="#a8201a" />
+    </radialGradient>
+  </defs>
+    <rect x="1" y="10" width="62" height="44" rx="20" fill="url(#cartoonBodyGrad)" />
+    <rect x="9" y="26" width="46" height="12" rx="6" fill="#e9fbc9" opacity="0.85" />
+    <path d="M1,20 Q32,14 63,20" stroke="#ffffff" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.35" />
+  </svg>

@@ -22,7 +22,13 @@ import {
   isThemeUnlocked,
   purchaseItem,
 } from './data'
-import { createInputController, createUiShell, type ShopItemView, type ThemeOption } from './ui'
+import {
+  createInputController,
+  createSoundPlayer,
+  createUiShell,
+  type ShopItemView,
+  type ThemeOption,
+} from './ui'
 
 const MODE_ID = 'classic'
 const MODE_CLASSIC = 'classic'
@@ -31,6 +37,7 @@ const MAX_FRAME_MS = 250
 const SETTING_THEME = 'theme'
 const SETTING_MODE = 'mode'
 const SETTING_LEVEL_PROGRESS = 'levels:highest'
+const SETTING_MUTED = 'muted'
 
 type GameMode = { readonly kind: 'classic' } | { readonly kind: 'level'; readonly index: number }
 
@@ -40,6 +47,7 @@ const canvas: HTMLCanvasElement = canvasEl
 
 const renderer = createRenderer(canvas)
 const storage = createLocalAdapter()
+const sound = createSoundPlayer()
 
 let highScore = 0
 let coins = 0
@@ -95,6 +103,14 @@ function onRoundEnd(finished: GameState): void {
     coins = balance
     shell.setCoins(balance)
   })
+  sound.play(finished.status === 'won' ? 'levelclear' : 'gameover')
+}
+
+function toggleMute(): void {
+  const muted = !sound.isMuted()
+  sound.setMuted(muted)
+  shell.setMuted(muted)
+  void storage.setSetting(SETTING_MUTED, muted ? 'true' : 'false')
 }
 
 function togglePause(): void {
@@ -172,7 +188,10 @@ async function refreshEconomy(): Promise<void> {
 
 function handlePurchase(itemId: string): void {
   void purchaseItem(storage, itemId).then((result) => {
-    if (result.ok) void refreshEconomy()
+    if (result.ok) {
+      sound.play('purchase')
+      void refreshEconomy()
+    }
   })
 }
 
@@ -193,8 +212,15 @@ const shell = createUiShell({
     setTheme(id, true)
   },
   onPurchase: handlePurchase,
+  onMuteToggle: toggleMute,
   onPauseToggle: togglePause,
   onRestart: () => requestRestart(true),
+})
+
+void storage.getSetting(SETTING_MUTED).then((saved) => {
+  const muted = saved === 'true'
+  sound.setMuted(muted)
+  shell.setMuted(muted)
 })
 
 void storage.getSetting(SETTING_THEME).then((saved) => {
@@ -274,6 +300,7 @@ function frame(now: number): void {
       const turned = queued ? applyTurn(state, queued) : state
       prev = turned
       state = step(turned)
+      if (state.applesEaten > turned.applesEaten) sound.play('eat')
       if (state.status !== 'running') onRoundEnd(state)
       accumulator -= tickMs
     }

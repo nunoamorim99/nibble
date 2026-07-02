@@ -137,15 +137,94 @@ what the HUD claims._
 
 ## 3. Theme switching
 
-_Status: pending — no theme system or renderer yet._
+_Status: Phase 6 (Content + juice) has landed — 7 themes total in
+`src/themes/` (classic, monoPlus, firstColor, coloredPixel, detailedPixel,
+cartoon, neon), the last three shipping as spritesheet themes (detailed-pixel,
+cartoon, neon) with Higgsfield scenic backgrounds under `public/assets/` and
+sprite-based rendering (`src/render/sprites.ts`) that falls back to the
+token-driven draw if a sheet is missing/slow to load. The shop catalog
+(`src/data/economy.config.ts`) now has 6 purchasable items priced 50→500
+coins in strictly increasing order; classic remains free/always-unlocked.
+Play the real build for all of the below — do not check anything off from
+reading code or from `npm run test` passing._
 
-- [ ] Switching themes from the menu applies immediately (or with a clear loading state)
-- [ ] No gameplay-affecting difference between themes (cosmetic only, per CLAUDE.md)
-- [ ] Classic (code-drawn) theme renders correctly with no missing colors/tokens
-- [ ] Illustrated/sprite-based themes (Phase 3+) load without visible pop-in or flicker
-- [ ] Theme choice persists across app restarts
-- [ ] Contrast/readability of snake vs. food vs. background holds up in every theme
-- [ ] No performance regression (dropped frames) when switching to a heavier theme
+### All themes render
+
+- [ ] Every one of the 7 themes (classic, monoPlus, firstColor, coloredPixel,
+      detailed-pixel, cartoon, neon) can be selected from the theme panel and
+      renders the snake, food, and grid with no missing/undefined colors or
+      blank sprites
+- [ ] Switching themes from the panel applies immediately (or with a clear,
+      brief loading state while a spritesheet fetches) — no stale frame from
+      the previous theme lingering
+- [ ] No gameplay-affecting difference between any two themes — same speed,
+      same collisions, same scoring regardless of which theme is active
+      (cosmetic only, per CLAUDE.md)
+
+### Sprite orientation (detailed-pixel, cartoon, neon)
+
+- [ ] Steer the snake through an S-curve (e.g. right → up → right → down →
+      right) on each of the 3 sprite themes and confirm: the head sprite
+      faces the direction of travel, straight body segments use the
+      horizontal/vertical part (not stretched or rotated wrong), and corner
+      segments show the correct rounded-corner orientation matching the two
+      cardinal directions the body actually bends between (no mirrored or
+      upside-down corners)
+- [ ] The tail segment's sprite orientation matches the direction from the
+      tail cell toward the segment in front of it, and updates correctly as
+      the snake grows and turns
+- [ ] On a wrap-around level/mode played with a sprite theme, a segment that
+      just wrapped across an edge still shows a continuous, correctly
+      oriented sprite rather than a visibly wrong tile at the seam
+
+### Shop lock state
+
+- [ ] Every locked (not-yet-purchased) theme shows the 🔒 marker next to its
+      name in the theme panel and cannot be selected by clicking/tapping it
+      (row is visibly disabled/dimmed)
+- [ ] Buying a theme in the shop immediately removes its 🔒 in the theme
+      panel (no reload needed) and makes it selectable
+- [ ] A locked theme's row is still reachable by keyboard (Tab) and announces
+      itself as locked (screen reader / accessible name), it just cannot be
+      activated
+
+### Background & readability (cartoon, neon)
+
+- [ ] The Higgsfield scenic background image is visibly present behind the
+      grid on cartoon and neon
+- [ ] Despite the background, the grid/snake/food/obstacles stay clearly
+      readable at a glance during real play — background never competes with
+      or gets confused for gameplay elements at normal play speed
+- [ ] Background image loads without a jarring pop-in/flash after the grid is
+      already visible (loads before or fades in smoothly)
+
+### Detailed-pixel crispness
+
+- [ ] Detailed-pixel renders with hard, crisp pixel edges at every zoom/canvas
+      size tested — no blurry/anti-aliased smoothing on the sprite art
+      (confirms `pixelated: true` / `imageSmoothingEnabled = false` is
+      actually taking effect on screen, not just in code)
+
+### Eat particles
+
+- [ ] With OS/browser reduced-motion OFF, eating an apple fires a small
+      particle burst at the eaten cell in every theme, classic included
+- [ ] With OS-level "reduce motion" turned ON before loading the page, eating
+      an apple does **not** spawn any particle burst — confirm this on at
+      least one theme, ideally both a token theme and a sprite theme
+- [ ] Toggling the OS reduced-motion setting while the app is already open
+      and reloading takes effect (particles stop/resume as expected after
+      reload)
+- [ ] Particle bursts never persist/pile up across many rapid eats (no growing
+      pile of stale dots on screen after eating several apples quickly)
+
+### Persistence & performance
+
+- [ ] Theme choice persists across a hard reload and across closing/reopening
+      the tab
+- [ ] No performance regression (dropped frames / stutter) when switching
+      from a token theme to a sprite theme, or between the two backgrounded
+      themes (cartoon, neon)
 
 ## 4. PWA install & offline
 
@@ -158,6 +237,87 @@ _Status: pending — no manifest, service worker, or offline caching yet._
 - [ ] Returning online after an offline session doesn't lose local progress (scores/coins)
 - [ ] App updates (new service worker) prompt the user or apply cleanly without data loss
 - [ ] Cold start time (installed, offline) is acceptable
+
+## 5. Sound & accessibility
+
+_Status: Phase 6 (Content + juice) has landed — WebAudio sound
+(`src/ui/sound.ts`, synthesized, no audio assets) with four effects (eat,
+gameover, levelclear, purchase) and a mute button whose state persists via
+the storage adapter, plus a full a11y pass on every overlay panel
+(`src/ui/shell.ts`): each is a `role="dialog"` with `aria-modal="true"` and
+`aria-labelledby`, traps Tab within itself, closes on Escape (which is
+explicitly stopped from bubbling to the page-level pause handler), and
+restores focus to whatever opened it on close. The coin counter and
+level-info label are `aria-live="polite"`. Play the real build with an
+actual keyboard and, where possible, a screen reader — do not check anything
+off from reading code._
+
+### Sound
+
+- [ ] Eating an apple plays a short, distinct rising blip, audibly different
+      from the other three effects
+- [ ] Dying (wall/self/obstacle, any mode) plays the descending
+      game-over tone
+- [ ] Clearing a level (or Classic-equivalent win state, if applicable) plays
+      the ascending level-clear jingle, audibly different from game-over
+- [ ] Buying an item in the shop plays the two-tone "cha-ching" purchase sound
+- [ ] Rapidly eating several apples in quick succession does not spam/overlap
+      the eat sound into a garbled mess (debounce feels natural, not
+      sluggish)
+- [ ] Toggling the mute button silences all four effects immediately; a
+      sound already mid-play when muted is allowed to finish but no new
+      sound starts
+- [ ] Un-muting restores sound on the very next triggering event, no reload
+      needed
+- [ ] Mute state persists across a hard reload and across closing/reopening
+      the tab (survives exactly like theme choice/high score do)
+- [ ] First-ever load (no prior mute preference saved) defaults to a
+      sensible state (unmuted) rather than crashing or showing an
+      indeterminate mute-button state
+- [ ] No sound plays before any user gesture has occurred (browsers block
+      autoplay) and the game does not error/hang waiting for one
+
+### Panels: focus, keyboard, and Escape behavior
+
+- [ ] Opening any overlay panel (mode select, theme select, shop,
+      leaderboard/settings — whichever exist in the build) moves keyboard
+      focus into the panel, not left behind on the page underneath
+- [ ] Pressing Tab repeatedly inside an open panel cycles only through that
+      panel's focusable elements — focus never escapes to page content behind
+      the panel (Shift+Tab from the first element wraps to the last, and vice
+      versa)
+- [ ] Pressing Escape while a panel is open closes it
+- [ ] Pressing Escape to close a panel does **not** also pause the game
+      running behind it — confirm the snake keeps moving/ticking at normal
+      speed the instant the panel closes, it was never paused by the same
+      Escape press (this is the one most likely to regress silently since
+      Escape is overloaded for both "close panel" and "pause game" at the
+      page level)
+- [ ] Closing a panel (via Escape, a close button, or clicking outside, per
+      whichever are wired up) returns keyboard focus to whichever button
+      originally opened it, not to the top of the page or nowhere
+- [ ] Every interactive control inside every panel (buttons, theme rows, shop
+      items, mute toggle, close button) is reachable via Tab alone, with no
+      mouse, and each shows a visible focus indicator
+- [ ] Activating a focused control with Enter or Space works the same as
+      clicking it, for every button type in every panel
+
+### Live announcements & screen reader basics
+
+- [ ] With a screen reader running, the coin counter's value change (after
+      earning coins or making a purchase) is announced without needing to
+      manually re-focus it (`aria-live="polite"` on the coin counter is
+      actually firing, not just present in markup)
+- [ ] With a screen reader running, the level-info label's change (entering
+      a new level, or switching Classic ↔ Levels) is likewise announced
+      automatically
+- [ ] Each open panel is announced as a dialog with a meaningful name
+      (reads out the panel's title, not "dialog" alone or a blank name)
+- [ ] Locked theme rows are announced as locked (per section 3) rather than
+      silently skipped or announced identically to unlocked rows
+- [ ] No panel or control produces a screen-reader announcement that is
+      misleading, duplicated on every keystroke, or completely silent when it
+      shouldn't be
 
 ---
 

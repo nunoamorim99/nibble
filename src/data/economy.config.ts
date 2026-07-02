@@ -58,4 +58,25 @@ export const SHOP_CATALOG: readonly ShopItem[] = [
     name: 'Colored Pixel',
     price: 200,
   },
+  {
+    id: 'theme:detailed-pixel',
+    kind: 'theme',
+    themeId: 'detailed-pixel',
+    name: 'Detailed Pixel',
+    price: 300,
+  },
+  {
+    id: 'theme:cartoon',
+    kind: 'theme',
+    themeId: 'cartoon',
+    name: 'Cartoon',
+    price: 400,
+  },
+  {
+    id: 'theme:neon',
+    kind: 'theme',
+    themeId: 'neon',
+    name: 'Neon',
+    price: 500,
+  },
 ]

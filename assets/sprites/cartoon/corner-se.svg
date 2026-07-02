@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="rotate(90 32 32)"><defs>
+    <linearGradient id="cartoonBodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a6e84f" />
+      <stop offset="1" stop-color="#2f7d32" />
+    </linearGradient>
+    <linearGradient id="cartoonHeadGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9f066" />
+      <stop offset="1" stop-color="#3c9142" />
+    </linearGradient>
+    <radialGradient id="cartoonAppleGrad" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ff7a6e" />
+      <stop offset="0.55" stop-color="#e8392f" />
+      <stop offset="1" stop-color="#a8201a" />
+    </radialGradient>
+  </defs>
+    <path d="M 2,0 A 62,62 0 0 1 64,62
+             L 64,30 A 30,30 0 0 0 34,0
+             Z"
+          fill="url(#cartoonBodyGrad)" />
+    <path d="M 8,3 A 54,54 0 0 1 61,56"
+          stroke="#e9fbc9" stroke-width="9" stroke-linecap="round" fill="none" opacity="0.85" />
+  </g></svg>

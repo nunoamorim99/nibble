@@ -45,6 +45,30 @@ describe('isThemeUnlocked', () => {
   it('is true for a catalog theme once its item id is unlocked', () => {
     expect(isThemeUnlocked('mono-plus', ['theme:mono-plus'])).toBe(true)
   })
+
+  it('is false for neon (ladder rung 7) until its item id is unlocked', () => {
+    expect(isThemeUnlocked('neon', [])).toBe(false)
+    expect(isThemeUnlocked('neon', ['theme:cartoon'])).toBe(false)
+    expect(isThemeUnlocked('neon', ['theme:neon'])).toBe(true)
+  })
+})
+
+describe('SHOP_CATALOG (ladder)', () => {
+  it('has 6 items', () => {
+    expect(SHOP_CATALOG).toHaveLength(6)
+  })
+
+  it('has unique ids', () => {
+    const ids = SHOP_CATALOG.map((item) => item.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('has strictly increasing prices in ladder order', () => {
+    const prices = SHOP_CATALOG.map((item) => item.price)
+    for (let i = 1; i < prices.length; i++) {
+      expect(prices[i]).toBeGreaterThan(prices[i - 1]!)
+    }
+  })
 })
 
 describe('getShopItem', () => {

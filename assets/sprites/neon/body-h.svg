@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>
+    <filter id="neonGlowSoft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="neonGlowStrong" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <linearGradient id="neonBodyFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161327" />
+      <stop offset="1" stop-color="#241a3d" />
+    </linearGradient>
+    <radialGradient id="neonOrbGrad" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.35" stop-color="#5ef0ff" />
+      <stop offset="0.75" stop-color="#ff3ad1" />
+      <stop offset="1" stop-color="#2a0a3d" />
+    </radialGradient>
+  </defs>
+    <rect x="2" y="14" width="60" height="36" rx="16" fill="url(#neonBodyFill)" />
+    <rect x="2" y="14" width="60" height="16" rx="8" fill="none" stroke="#4ff2ff" stroke-width="2.5" filter="url(#neonGlowSoft)" opacity="0.9" />
+    <rect x="2" y="34" width="60" height="16" rx="8" fill="none" stroke="#ff3ad1" stroke-width="2.5" filter="url(#neonGlowSoft)" opacity="0.9" />
+    <rect x="2" y="14" width="60" height="36" rx="16" fill="none" stroke="#4ff2ff" stroke-width="1.5" opacity="0.7" />
+  </svg>

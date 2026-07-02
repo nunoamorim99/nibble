@@ -15,3 +15,6 @@ export type { InputController } from './input'
 
 export { createUiShell } from './shell'
 export type { ModeOption, ShopItemView, ThemeOption, UiShell } from './shell'
+
+export { createSoundPlayer } from './sound'
+export type { SoundEffect, SoundPlayer } from './sound'

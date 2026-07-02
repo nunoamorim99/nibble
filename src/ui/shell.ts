@@ -1,30 +1,42 @@
 /**
  * UI shell — the DOM chrome around the canvas: a control bar (mode,
- * pause/resume, leaderboard, themes, shop, new game, coin counter, level-info
- * label), a mode panel, a themes panel, a shop panel, a leaderboard overlay,
- * and a score-submission dialog shown on game over. Built entirely with
- * `document.createElement` calls appended under `#ui-root`; `index.html`
- * stays declarative-minimal.
+ * pause/resume, leaderboard, themes, shop, sound, new game, coin counter,
+ * level-info label), a mode panel, a themes panel, a shop panel, a
+ * leaderboard overlay, and a score-submission dialog shown on game over.
+ * Built entirely with `document.createElement` calls appended under
+ * `#ui-root`; `index.html` stays declarative-minimal.
  *
  * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
  * direct storage access, no engine imports beyond types re-exported from
  * `src/engine` elsewhere in this layer. Pause/restart/mode-select/theme-select
- * /purchase are forwarded as abstract callbacks; this module never touches
- * engine, level, theme-registry, or economy internals itself — `ModeOption`,
- * `ThemeOption`, and `ShopItemView` are plain display data owned by this
- * layer. The shell knows nothing about what a mode *means* (level config,
- * rules, engine wiring) — it only renders the option list and reports the
- * selected id upward; the caller owns starting/restarting games. The shell
- * decides nothing about affordability, ownership, or unlocks either: it
- * renders exactly the data it is given (via constructor opts or
+ * /purchase/mute-toggle are forwarded as abstract callbacks; this module
+ * never touches engine, level, theme-registry, economy, or audio internals
+ * itself — `ModeOption`, `ThemeOption`, and `ShopItemView` are plain display
+ * data owned by this layer, and the sound button only reports clicks: the
+ * caller (main.ts) owns the actual `SoundPlayer` and any persisted mute
+ * preference. The shell knows nothing about what a mode *means* (level
+ * config, rules, engine wiring) — it only renders the option list and
+ * reports the selected id upward; the caller owns starting/restarting games.
+ * The shell decides nothing about affordability, ownership, or unlocks
+ * either: it renders exactly the data it is given (via constructor opts or
  * `updateThemes` / `updateShop` / `setCoins` / `setActiveMode` /
- * `setLevelInfo`) and reports clicks upward.
+ * `setLevelInfo` / `setMuted`) and reports clicks upward.
+ *
+ * Accessibility: every button carries an `aria-label`; every overlay panel
+ * is a `role="dialog"` with `aria-modal="true"` and `aria-labelledby`
+ * pointing at its title. Opening a panel moves focus into it and traps Tab
+ * within it; Escape closes the panel (and stops the keydown from bubbling
+ * to the page-level pause handler in `input.ts`); closing restores focus to
+ * the control-bar button that opened it. The coin counter and level-info
+ * label are `aria-live="polite"` so balance/level changes are announced.
  */
 import type { PersistenceAdapter } from '../data'
 
 const STYLE_ELEMENT_ID = 'nibble-ui-style'
 const DEFAULT_INITIALS = 'AAA'
 const LOCK_MARKER = '\u{1F512}'
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /** Remembers the last-used initials for the lifetime of the module/session. */
 let lastInitials = DEFAULT_INITIALS
@@ -62,6 +74,8 @@ export interface UiShell {
   setLevelInfo(text: string | null): void
   /** Update the coin counter in the control bar. */
   setCoins(balance: number): void
+  /** Reflect mute state on the sound button (e.g. "SOUND: ON/OFF"). Caller owns the SoundPlayer + persistence. */
+  setMuted(muted: boolean): void
   /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
   updateThemes(themes: readonly ThemeOption[]): void
   /** Replace shop item states; re-renders in place if the shop panel is open. */
@@ -85,8 +99,10 @@ export function createUiShell(opts: {
   onPurchase(itemId: string): void
   onPauseToggle(): void
   onRestart(): void
+  /** User clicked the sound button. The shell shows the button only; main.ts owns the SoundPlayer + persisted preference. */
+  onMuteToggle(): void
 }): UiShell {
-  const { adapter, modeId, onModeSelect, onThemeSelect, onPurchase, onPauseToggle, onRestart } = opts
+  const { adapter, modeId, onModeSelect, onThemeSelect, onPurchase, onPauseToggle, onRestart, onMuteToggle } = opts
   let modes = opts.modes
   let themes = opts.themes
   let shopItems = opts.shopItems
@@ -98,6 +114,73 @@ export function createUiShell(opts: {
   const root = document.getElementById('ui-root')
   if (!root) throw new Error('#ui-root not found')
 
+  // --- dialog helper ------------------------------------------------------
+  // Shared wiring for every overlay panel below: role="dialog" + aria-modal,
+  // aria-labelledby -> the panel's own title, Escape-to-close (stopped from
+  // bubbling so input.ts's page-level Escape-pauses-game handler never
+  // fires while a panel is open), a simple first/last-sentinel focus trap,
+  // and focus save/restore so closing a panel returns focus to whichever
+  // control-bar button opened it.
+  let dialogUidCounter = 0
+
+  function makeDialog(overlay: HTMLDivElement, panel: HTMLDivElement, title: HTMLHeadingElement): {
+    open(opener: HTMLElement | null, focusTarget?: HTMLElement): void
+    close(): void
+  } {
+    if (!title.id) title.id = `nibble-dialog-title-${++dialogUidCounter}`
+    panel.setAttribute('role', 'dialog')
+    panel.setAttribute('aria-modal', 'true')
+    panel.setAttribute('aria-labelledby', title.id)
+    panel.tabIndex = -1
+
+    let lastOpener: HTMLElement | null = null
+
+    function focusables(): HTMLElement[] {
+      return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hidden && el.offsetParent !== null,
+      )
+    }
+
+    function onKeydown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        event.preventDefault()
+        close()
+        return
+      }
+      if (event.key === 'Tab') {
+        const items = focusables()
+        if (items.length === 0) return
+        const first = items[0]
+        const last = items[items.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+
+    function open(opener: HTMLElement | null, focusTarget?: HTMLElement): void {
+      lastOpener = opener
+      overlay.hidden = false
+      overlay.addEventListener('keydown', onKeydown)
+      const target = focusTarget ?? focusables()[0] ?? panel
+      target.focus()
+    }
+
+    function close(): void {
+      overlay.hidden = true
+      overlay.removeEventListener('keydown', onKeydown)
+      lastOpener?.focus()
+      lastOpener = null
+    }
+
+    return { open, close }
+  }
+
   // --- control bar ---------------------------------------------------
   const bar = document.createElement('div')
   bar.className = 'nibble-bar'
@@ -105,45 +188,58 @@ export function createUiShell(opts: {
   const modeButton = document.createElement('button')
   modeButton.type = 'button'
   modeButton.className = 'nibble-btn'
-  modeButton.addEventListener('click', () => openModes())
+  modeButton.setAttribute('aria-label', 'Choose game mode')
+  modeButton.addEventListener('click', () => openModes(modeButton))
 
   const pauseButton = document.createElement('button')
   pauseButton.type = 'button'
   pauseButton.className = 'nibble-btn'
   pauseButton.textContent = 'Pause'
+  pauseButton.setAttribute('aria-label', 'Pause game')
   pauseButton.addEventListener('click', () => onPauseToggle())
 
   const leaderboardButton = document.createElement('button')
   leaderboardButton.type = 'button'
   leaderboardButton.className = 'nibble-btn'
   leaderboardButton.textContent = 'Leaderboard'
-  leaderboardButton.addEventListener('click', () => openLeaderboard())
+  leaderboardButton.setAttribute('aria-label', 'Open leaderboard')
+  leaderboardButton.addEventListener('click', () => openLeaderboard(leaderboardButton))
 
   const themesButton = document.createElement('button')
   themesButton.type = 'button'
   themesButton.className = 'nibble-btn'
   themesButton.textContent = 'Themes'
-  themesButton.addEventListener('click', () => openThemes())
+  themesButton.setAttribute('aria-label', 'Choose theme')
+  themesButton.addEventListener('click', () => openThemes(themesButton))
 
   const shopButton = document.createElement('button')
   shopButton.type = 'button'
   shopButton.className = 'nibble-btn'
   shopButton.textContent = 'Shop'
-  shopButton.addEventListener('click', () => openShop())
+  shopButton.setAttribute('aria-label', 'Open shop')
+  shopButton.addEventListener('click', () => openShop(shopButton))
+
+  const soundButton = document.createElement('button')
+  soundButton.type = 'button'
+  soundButton.className = 'nibble-btn'
+  soundButton.addEventListener('click', () => onMuteToggle())
 
   const restartButton = document.createElement('button')
   restartButton.type = 'button'
   restartButton.className = 'nibble-btn'
   restartButton.textContent = 'New Game'
+  restartButton.setAttribute('aria-label', 'Start new game')
   restartButton.addEventListener('click', () => onRestart())
 
   const coinCounter = document.createElement('span')
   coinCounter.className = 'nibble-coin-counter'
   coinCounter.setAttribute('aria-label', 'Coin balance')
+  coinCounter.setAttribute('aria-live', 'polite')
 
   const levelInfoLabel = document.createElement('span')
   levelInfoLabel.className = 'nibble-level-info'
   levelInfoLabel.setAttribute('aria-label', 'Level info')
+  levelInfoLabel.setAttribute('aria-live', 'polite')
   levelInfoLabel.hidden = true
 
   bar.append(
@@ -152,11 +248,19 @@ export function createUiShell(opts: {
     leaderboardButton,
     themesButton,
     shopButton,
+    soundButton,
     restartButton,
     coinCounter,
     levelInfoLabel,
   )
   root.appendChild(bar)
+
+  function syncSoundButtonLabel(muted: boolean): void {
+    soundButton.textContent = muted ? 'SOUND: OFF' : 'SOUND: ON'
+    soundButton.setAttribute('aria-label', muted ? 'Sound is off. Click to turn on.' : 'Sound is on. Click to turn off.')
+    soundButton.setAttribute('aria-pressed', String(!muted))
+  }
+  syncSoundButtonLabel(false)
 
   function renderCoinCounter(balance: number): void {
     coinCounter.textContent = `◉ ${balance}`
@@ -191,11 +295,14 @@ export function createUiShell(opts: {
   modesCloseButton.type = 'button'
   modesCloseButton.className = 'nibble-btn'
   modesCloseButton.textContent = 'Close'
+  modesCloseButton.setAttribute('aria-label', 'Close mode selection')
   modesCloseButton.addEventListener('click', () => closeModes())
 
   modesPanel.append(modesTitle, modesList, modesCloseButton)
   modesOverlay.appendChild(modesPanel)
   root.appendChild(modesOverlay)
+
+  const modesDialog = makeDialog(modesOverlay, modesPanel, modesTitle)
 
   const modeRowButtons = new Map<string, HTMLButtonElement>()
 
@@ -218,6 +325,7 @@ export function createUiShell(opts: {
       const rowButton = document.createElement('button')
       rowButton.type = 'button'
       rowButton.className = 'nibble-mode-btn'
+      rowButton.setAttribute('aria-label', `Select ${mode.name} mode`)
       rowButton.addEventListener('click', () => {
         onModeSelect(mode.id)
         closeModes()
@@ -241,13 +349,13 @@ export function createUiShell(opts: {
     })
   }
 
-  function openModes(): void {
+  function openModes(opener: HTMLElement): void {
     renderModeRows()
-    modesOverlay.hidden = false
+    modesDialog.open(opener)
   }
 
   function closeModes(): void {
-    modesOverlay.hidden = true
+    modesDialog.close()
   }
 
   // --- leaderboard overlay -------------------------------------------
@@ -269,11 +377,14 @@ export function createUiShell(opts: {
   leaderboardCloseButton.type = 'button'
   leaderboardCloseButton.className = 'nibble-btn'
   leaderboardCloseButton.textContent = 'Close'
+  leaderboardCloseButton.setAttribute('aria-label', 'Close leaderboard')
   leaderboardCloseButton.addEventListener('click', () => closeLeaderboard())
 
   leaderboardPanel.append(leaderboardTitle, leaderboardList, leaderboardCloseButton)
   leaderboardOverlay.appendChild(leaderboardPanel)
   root.appendChild(leaderboardOverlay)
+
+  const leaderboardDialog = makeDialog(leaderboardOverlay, leaderboardPanel, leaderboardTitle)
 
   function renderLeaderboardRows(
     entries: readonly { name: string; score: number }[],
@@ -307,15 +418,15 @@ export function createUiShell(opts: {
     })
   }
 
-  function openLeaderboard(): void {
-    leaderboardOverlay.hidden = false
+  function openLeaderboard(opener: HTMLElement): void {
+    leaderboardDialog.open(opener)
     void adapter.getLeaderboard(modeId).then((entries) => {
       renderLeaderboardRows(entries)
     })
   }
 
   function closeLeaderboard(): void {
-    leaderboardOverlay.hidden = true
+    leaderboardDialog.close()
   }
 
   // --- themes panel -----------------------------------------------------
@@ -337,11 +448,14 @@ export function createUiShell(opts: {
   themesCloseButton.type = 'button'
   themesCloseButton.className = 'nibble-btn'
   themesCloseButton.textContent = 'Close'
+  themesCloseButton.setAttribute('aria-label', 'Close theme selection')
   themesCloseButton.addEventListener('click', () => closeThemes())
 
   themesPanel.append(themesTitle, themesList, themesCloseButton)
   themesOverlay.appendChild(themesPanel)
   root.appendChild(themesOverlay)
+
+  const themesDialog = makeDialog(themesOverlay, themesPanel, themesTitle)
 
   const themeRowButtons = new Map<string, HTMLButtonElement>()
 
@@ -388,16 +502,20 @@ export function createUiShell(opts: {
       rowButton.textContent = isActive ? `▶ ${label}` : label
       rowButton.classList.toggle('nibble-theme-btn-active', isActive)
       rowButton.classList.toggle('nibble-theme-btn-locked', Boolean(theme.locked))
+      rowButton.setAttribute(
+        'aria-label',
+        theme.locked ? `${theme.name}, locked` : `Select ${theme.name} theme`,
+      )
     })
   }
 
-  function openThemes(): void {
+  function openThemes(opener: HTMLElement): void {
     renderThemeRows()
-    themesOverlay.hidden = false
+    themesDialog.open(opener)
   }
 
   function closeThemes(): void {
-    themesOverlay.hidden = true
+    themesDialog.close()
   }
 
   // --- shop panel -------------------------------------------------------
@@ -419,11 +537,14 @@ export function createUiShell(opts: {
   shopCloseButton.type = 'button'
   shopCloseButton.className = 'nibble-btn'
   shopCloseButton.textContent = 'Close'
+  shopCloseButton.setAttribute('aria-label', 'Close shop')
   shopCloseButton.addEventListener('click', () => closeShop())
 
   shopPanel.append(shopTitle, shopList, shopCloseButton)
   shopOverlay.appendChild(shopPanel)
   root.appendChild(shopOverlay)
+
+  const shopDialog = makeDialog(shopOverlay, shopPanel, shopTitle)
 
   let shopOpen = false
 
@@ -462,6 +583,7 @@ export function createUiShell(opts: {
         buyButton.type = 'button'
         buyButton.className = 'nibble-btn nibble-shop-buy'
         buyButton.textContent = 'Buy'
+        buyButton.setAttribute('aria-label', `Buy ${item.name} for ${item.price} coins`)
         buyButton.addEventListener('click', () => onPurchase(item.id))
         row.appendChild(buyButton)
       }
@@ -470,15 +592,15 @@ export function createUiShell(opts: {
     })
   }
 
-  function openShop(): void {
+  function openShop(opener: HTMLElement): void {
     shopOpen = true
     renderShopRows()
-    shopOverlay.hidden = false
+    shopDialog.open(opener)
   }
 
   function closeShop(): void {
     shopOpen = false
-    shopOverlay.hidden = true
+    shopDialog.close()
   }
 
   // --- score submit dialog --------------------------------------------
@@ -499,8 +621,10 @@ export function createUiShell(opts: {
   const submitLabel = document.createElement('label')
   submitLabel.className = 'nibble-initials-label'
   submitLabel.textContent = 'Enter initials'
+  submitLabel.htmlFor = 'nibble-initials-input'
 
   const initialsInput = document.createElement('input')
+  initialsInput.id = 'nibble-initials-input'
   initialsInput.type = 'text'
   initialsInput.className = 'nibble-initials-input'
   initialsInput.maxLength = 3
@@ -511,6 +635,12 @@ export function createUiShell(opts: {
   initialsInput.addEventListener('input', () => {
     initialsInput.value = initialsInput.value.toUpperCase().slice(0, 3)
   })
+  initialsInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      submitHandler()
+    }
+  })
 
   const submitActions = document.createElement('div')
   submitActions.className = 'nibble-dialog-actions'
@@ -519,17 +649,21 @@ export function createUiShell(opts: {
   submitButton.type = 'button'
   submitButton.className = 'nibble-btn'
   submitButton.textContent = 'Submit'
+  submitButton.setAttribute('aria-label', 'Submit score with these initials')
 
   const skipButton = document.createElement('button')
   skipButton.type = 'button'
   skipButton.className = 'nibble-btn'
   skipButton.textContent = 'Skip'
+  skipButton.setAttribute('aria-label', 'Skip submitting score')
   skipButton.addEventListener('click', () => closeSubmitDialog())
 
   submitActions.append(submitButton, skipButton)
   submitPanel.append(submitTitle, submitScoreLine, submitLabel, submitActions)
   submitOverlay.appendChild(submitPanel)
   root.appendChild(submitOverlay)
+
+  const submitDialog = makeDialog(submitOverlay, submitPanel, submitTitle)
 
   let pendingScore = 0
 
@@ -547,12 +681,13 @@ export function createUiShell(opts: {
   submitButton.addEventListener('click', submitHandler)
 
   function closeSubmitDialog(): void {
-    submitOverlay.hidden = true
+    submitDialog.close()
   }
 
   return {
     setPaused(paused) {
       pauseButton.textContent = paused ? 'Resume' : 'Pause'
+      pauseButton.setAttribute('aria-label', paused ? 'Resume game' : 'Pause game')
     },
 
     setActiveTheme(id) {
@@ -580,6 +715,10 @@ export function createUiShell(opts: {
       renderCoinCounter(balance)
     },
 
+    setMuted(muted) {
+      syncSoundButtonLabel(muted)
+    },
+
     updateThemes(nextThemes) {
       themes = nextThemes
       if (!themesOverlay.hidden) renderThemeRows()
@@ -594,8 +733,7 @@ export function createUiShell(opts: {
       pendingScore = score
       submitScoreLine.textContent = `Score: ${score}`
       initialsInput.value = lastInitials
-      submitOverlay.hidden = false
-      initialsInput.focus()
+      submitDialog.open(null, initialsInput)
       initialsInput.select()
     },
 
@@ -645,6 +783,13 @@ function injectStyles(): void {
       background: #c4cfa1;
       color: #1a1c16;
       outline: none;
+    }
+    .nibble-btn:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
+    }
+    .nibble-btn[aria-pressed='false'] {
+      opacity: 0.75;
     }
     .nibble-coin-counter {
       display: inline-flex;
@@ -751,6 +896,10 @@ function injectStyles(): void {
       background: #2a2d22;
       outline: none;
     }
+    .nibble-mode-btn:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
+    }
     .nibble-mode-btn-active {
       border-color: #e8f0c4;
       color: #e8f0c4;
@@ -791,6 +940,10 @@ function injectStyles(): void {
     .nibble-theme-btn:focus-visible {
       background: #2a2d22;
       outline: none;
+    }
+    .nibble-theme-btn:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
     }
     .nibble-theme-btn-active {
       border-color: #e8f0c4;
@@ -882,6 +1035,19 @@ function injectStyles(): void {
       display: flex;
       gap: 0.5rem;
       justify-content: center;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .nibble-btn,
+      .nibble-mode-btn,
+      .nibble-theme-btn {
+        transition: background-color 120ms ease, color 120ms ease;
+      }
+      .nibble-overlay {
+        transition: opacity 120ms ease;
+      }
+      .nibble-panel {
+        transition: transform 120ms ease;
+      }
     }
   `
   document.head.appendChild(style)

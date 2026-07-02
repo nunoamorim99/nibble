@@ -41,6 +41,15 @@ export interface ThemeColors {
    * takes precedence over the flat `background` fill.
    */
   readonly backgroundGradient?: readonly [string, string]
+  /**
+   * Optional scenic background image URL (e.g. a Higgsfield-generated scene).
+   * When present it takes precedence over `backgroundGradient`/`background`
+   * for the fill; the renderer draws it cover-scaled and dims it with a
+   * translucent `background`-colored overlay (~0.35 alpha) so gameplay stays
+   * readable on top. Falls back to the gradient/flat fill while the image is
+   * loading or if it fails to load.
+   */
+  readonly backgroundImage?: string
 }
 
 /** How a single grid cell is shaped when filled. */
@@ -61,6 +70,37 @@ export interface ThemeCellStyle {
 }
 
 /**
+ * Optional spritesheet reference for skin-based themes (ladder rung 5+). The
+ * renderer lazy-loads `sheetUrl` (an image) and `mapUrl` (the pinned
+ * `{ tile, parts }` JSON) once per theme id and caches the result; until
+ * loaded — or if either fetch fails — the renderer falls back to the
+ * token-driven `fillCell` pipeline, so a theme with `sprites` set is always
+ * safe to select even before art exists on disk.
+ */
+export interface ThemeSprites {
+  /** URL of the spritesheet image (a grid of `tile`×`tile` px cells). */
+  readonly sheetUrl: string
+  /** URL of the sheet's `{ tile, parts }` JSON part map. */
+  readonly mapUrl: string
+  /**
+   * When `true`, sprite tiles are drawn with `imageSmoothingEnabled = false`
+   * for crisp, unblurred pixel art. Absent/`false` draws with the canvas
+   * default (smoothed) — appropriate for painterly/illustrated sheets.
+   */
+  readonly pixelated?: boolean
+}
+
+/**
+ * Optional cosmetic eat-particle burst, spawned by the renderer (never the
+ * engine) when it observes `applesEaten` increase between draws. Purely
+ * decorative; deciding nothing about scoring or collision.
+ */
+export interface ThemeParticles {
+  /** Burst color palette; one is picked per particle. At least one entry. */
+  readonly eat: readonly string[]
+}
+
+/**
  * A complete theme: tokens the renderer reads verbatim. No behavior, no
  * functions — swapping a theme is swapping this data object.
  */
@@ -78,4 +118,14 @@ export interface Theme {
    * ignored entirely.
    */
   readonly interpolate: boolean
+  /**
+   * Optional skin spritesheet (ladder rung 5+). Absent means the theme is
+   * drawn entirely from `colors`/`cell` tokens via the code-drawn pipeline.
+   */
+  readonly sprites?: ThemeSprites
+  /**
+   * Optional cosmetic burst colors for the eat-particle effect. Absent falls
+   * back to a single-color burst using `colors.food`.
+   */
+  readonly particles?: ThemeParticles
 }
