@@ -4,30 +4,19 @@ import {
   createInitialState,
   step,
   ticksPerSecond,
-  type Direction,
   type GameState,
 } from './engine'
 import { createRenderer } from './render'
 import { classicTheme } from './themes'
 import { createLocalAdapter } from './data'
+import { createInputController, createUiShell } from './ui'
 
 const MODE_ID = 'classic'
-const MAX_QUEUED_TURNS = 3
 const MAX_FRAME_MS = 250
 
-const KEY_DIRECTIONS: Record<string, Direction> = {
-  ArrowUp: 'up',
-  KeyW: 'up',
-  ArrowDown: 'down',
-  KeyS: 'down',
-  ArrowLeft: 'left',
-  KeyA: 'left',
-  ArrowRight: 'right',
-  KeyD: 'right',
-}
-
-const canvas = document.querySelector<HTMLCanvasElement>('#game')
-if (!canvas) throw new Error('Canvas #game not found')
+const canvasEl = document.querySelector<HTMLCanvasElement>('#game')
+if (!canvasEl) throw new Error('Canvas #game not found')
+const canvas: HTMLCanvasElement = canvasEl
 
 const renderer = createRenderer(canvas)
 const storage = createLocalAdapter()
@@ -40,9 +29,9 @@ function newGame(): GameState {
 }
 
 let highScore = 0
+let paused = false
 let prev: GameState | null = null
 let state = newGame()
-let inputQueue: Direction[] = []
 let accumulator = 0
 let lastTime = performance.now()
 
@@ -55,47 +44,72 @@ function onRoundEnd(finished: GameState): void {
     highScore = finished.score
     void storage.setHighScore(MODE_ID, finished.score)
   }
+  if (finished.score > 0) shell.promptScoreSubmit(finished.score)
 }
 
-function restart(): void {
+function togglePause(): void {
+  if (state.status !== 'running') return
+  paused = !paused
+  accumulator = 0
+  shell.setPaused(paused)
+}
+
+function requestRestart(force: boolean): void {
+  if (!force && state.status === 'running') return
   prev = null
-  inputQueue = []
+  paused = false
   accumulator = 0
   state = newGame()
+  shell.setPaused(false)
 }
 
-window.addEventListener('keydown', (event) => {
-  const dir = KEY_DIRECTIONS[event.code]
-  if (dir) {
-    event.preventDefault()
-    const lastQueued = inputQueue[inputQueue.length - 1]
-    if (lastQueued !== dir && inputQueue.length < MAX_QUEUED_TURNS) {
-      inputQueue.push(dir)
-    }
-    return
-  }
-  if ((event.code === 'Enter' || event.code === 'Space') && state.status !== 'running') {
-    event.preventDefault()
-    restart()
-  }
+const shell = createUiShell({
+  adapter: storage,
+  modeId: MODE_ID,
+  onPauseToggle: togglePause,
+  onRestart: () => requestRestart(true),
 })
+
+const input = createInputController({
+  swipeTarget: canvas,
+  onPauseToggle: togglePause,
+  onRestart: () => requestRestart(false),
+})
+
+// Responsive square canvas: match the CSS display size at device resolution.
+// The renderer recomputes cell geometry from canvas.width/height every draw.
+function resizeCanvas(): void {
+  const dpr = window.devicePixelRatio || 1
+  const cssSize = canvas.clientWidth || canvas.width
+  const pixelSize = Math.max(1, Math.round(cssSize * dpr))
+  if (canvas.width !== pixelSize || canvas.height !== pixelSize) {
+    canvas.width = pixelSize
+    canvas.height = pixelSize
+  }
+}
+new ResizeObserver(resizeCanvas).observe(canvas)
+resizeCanvas()
 
 function frame(now: number): void {
   const tickMs = 1000 / ticksPerSecond(state.config)
-  accumulator = Math.min(accumulator + (now - lastTime), MAX_FRAME_MS)
+  const delta = now - lastTime
   lastTime = now
 
-  while (accumulator >= tickMs && state.status === 'running') {
-    const queued = inputQueue.shift()
-    const turned = queued ? applyTurn(state, queued) : state
-    prev = turned
-    state = step(turned)
-    if (state.status !== 'running') onRoundEnd(state)
-    accumulator -= tickMs
+  if (!paused && state.status === 'running') {
+    accumulator = Math.min(accumulator + delta, MAX_FRAME_MS)
+    while (accumulator >= tickMs && state.status === 'running') {
+      const queued = input.takeTurn()
+      const turned = queued ? applyTurn(state, queued) : state
+      prev = turned
+      state = step(turned)
+      if (state.status !== 'running') onRoundEnd(state)
+      accumulator -= tickMs
+    }
   }
 
-  const alpha = state.status === 'running' ? Math.min(accumulator / tickMs, 1) : 1
-  renderer.draw(prev, state, alpha, classicTheme, { highScore })
+  const alpha =
+    !paused && state.status === 'running' ? Math.min(accumulator / tickMs, 1) : 1
+  renderer.draw(prev, state, alpha, classicTheme, { highScore, paused })
   requestAnimationFrame(frame)
 }
 

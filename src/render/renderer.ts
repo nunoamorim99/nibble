@@ -10,6 +10,8 @@ import type { Theme } from '../themes'
 /** Read-only HUD data supplied by the caller; the renderer never computes it. */
 export interface Hud {
   readonly highScore: number
+  /** Loop-level pause flag (pause is not engine state); drawn as an overlay. */
+  readonly paused?: boolean
 }
 
 /** A themed, stateless-per-call drawer bound to one canvas. */
@@ -196,8 +198,16 @@ function drawHud(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, next:
   }
 }
 
-function drawOverlay(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, next: GameState, theme: Theme): void {
-  if (next.status !== 'gameover' && next.status !== 'won') return
+function drawOverlay(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  next: GameState,
+  theme: Theme,
+  hud?: Hud,
+): void {
+  const roundEnded = next.status === 'gameover' || next.status === 'won'
+  const paused = hud?.paused === true && next.status === 'running'
+  if (!roundEnded && !paused) return
 
   ctx.fillStyle = theme.colors.overlayBackdrop
   ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -208,6 +218,14 @@ function drawOverlay(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, n
   ctx.fillStyle = theme.colors.overlayText
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+
+  if (paused) {
+    ctx.font = OVERLAY_TITLE_FONT
+    ctx.fillText('PAUSED', centerX, centerY - OVERLAY_LINE_GAP)
+    ctx.font = OVERLAY_LINE_FONT
+    ctx.fillText('Press P to resume', centerX, centerY + OVERLAY_LINE_GAP * 0.4)
+    return
+  }
 
   const title = next.status === 'won' ? 'YOU WIN' : 'GAME OVER'
 
@@ -236,7 +254,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
       drawFood(ctx, layout, next.food, theme)
       drawSnake(ctx, layout, prev, next, clampedAlpha, theme)
       drawHud(ctx, canvas, next, theme, hud)
-      drawOverlay(ctx, canvas, next, theme)
+      drawOverlay(ctx, canvas, next, theme, hud)
     },
   }
 }

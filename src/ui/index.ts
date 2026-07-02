@@ -9,7 +9,9 @@
  * forwarded to the engine as abstract commands (up/down/left/right/pause),
  * never raw key/touch events. Talks to persistence and the economy only
  * via the `src/data` adapter — never touches storage directly.
- *
- * Phase 0: stub only. No UI code yet.
  */
-export {}
+export { createInputController } from './input'
+export type { InputController } from './input'
+
+export { createUiShell } from './shell'
+export type { UiShell } from './shell'
