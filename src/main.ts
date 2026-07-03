@@ -199,6 +199,32 @@ function handlePurchase(itemId: string): void {
   })
 }
 
+// Menu flow: opening the menu mid-run pauses; closing it resumes only what
+// the menu itself paused. Picking a mode always starts a fresh run.
+let pausedByMenu = false
+
+function handlePlay(id: string): void {
+  pausedByMenu = false
+  const wantLevels = id === MODE_LEVELS
+  if (wantLevels === (mode.kind === 'level')) {
+    requestRestart(true)
+    return
+  }
+  setMode(id, true)
+}
+
+function handleMenuOpen(): void {
+  if (state.status === 'running' && !paused && !awaitingStart) {
+    togglePause()
+    pausedByMenu = true
+  }
+}
+
+function handleMenuClose(): void {
+  if (pausedByMenu && paused) togglePause()
+  pausedByMenu = false
+}
+
 const shell = createUiShell({
   adapter: storage,
   modeId: MODE_ID,
@@ -207,7 +233,9 @@ const shell = createUiShell({
     { id: MODE_LEVELS, name: 'Levels' },
   ],
   activeModeId: MODE_CLASSIC,
-  onModeSelect: (id) => setMode(id, true),
+  onPlay: handlePlay,
+  onMenuOpen: handleMenuOpen,
+  onMenuClose: handleMenuClose,
   themes: themeOptions(),
   activeThemeId: DEFAULT_THEME_ID,
   shopItems: shopItemViews(),

@@ -19,8 +19,14 @@ const BODY_GREEN = '#4c8c3f'
 const HEAD_GREEN = '#6ab54f'
 /** Fallback amber food color, used only until the sheet loads. */
 const FOOD_AMBER = '#e0a336'
-/** Muted obstacle stone tone. */
-const OBSTACLE_GREY = '#5a5346'
+/**
+ * Cool blue-grey "flagstone" obstacle tone — an almost directly opposite hue
+ * from the warm amber food (~178° apart) and clearly separated from the
+ * green snake (contrast ~1.5-2.4, hue ~110-116° apart). The old warm stone
+ * grey sat in the same hue family as the amber food (hue-diff ~1°), so it
+ * only ever separated from food by lightness, never by color.
+ */
+const OBSTACLE_FLAGSTONE = '#5e6470'
 /** Warm off-white text. */
 const LIGHT_TEXT = '#f3ecd8'
 /** White eye dot, used only in the token fallback (sprites draw their own eye). */
@@ -35,7 +41,7 @@ export const detailedPixelTheme: Theme = {
     snakeHead: HEAD_GREEN,
     snakeBody: BODY_GREEN,
     food: FOOD_AMBER,
-    obstacle: OBSTACLE_GREY,
+    obstacle: OBSTACLE_FLAGSTONE,
     hudText: LIGHT_TEXT,
     overlayText: LIGHT_TEXT,
     overlayBackdrop: 'rgba(26, 23, 18, 0.85)',

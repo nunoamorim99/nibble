@@ -21,8 +21,13 @@ const BODY_GREEN_ALT = '#2e7d32'
 const HEAD_GREEN = '#66bb6a'
 /** Amber food. */
 const FOOD_AMBER = '#ffb300'
-/** Muted obstacle color that reads against the dark background. */
-const OBSTACLE_GREY = '#5c6b7a'
+/**
+ * Deep blue-slate obstacle color — a near-opposite hue from the amber food
+ * (~173° apart, contrast 4.04:1) and clearly separated from both snake greens
+ * (contrast ~2.2-3.1), fixing the old muted grey's weak separation from the
+ * body green (contrast was only 1.66:1).
+ */
+const OBSTACLE_SLATE = '#455873'
 /** Light text for HUD/overlay against the dark background. */
 const LIGHT_TEXT = '#eceff1'
 /** White eye dot on the head. */
@@ -39,7 +44,7 @@ export const coloredPixelTheme: Theme = {
     snakeBody: BODY_GREEN,
     snakeBodyAlt: BODY_GREEN_ALT,
     food: FOOD_AMBER,
-    obstacle: OBSTACLE_GREY,
+    obstacle: OBSTACLE_SLATE,
     hudText: LIGHT_TEXT,
     overlayText: LIGHT_TEXT,
     overlayBackdrop: 'rgba(20, 29, 38, 0.85)',

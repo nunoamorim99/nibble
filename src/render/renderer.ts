@@ -158,6 +158,77 @@ function fillCell(ctx: CanvasRenderingContext2D, rect: CellRect, theme: Theme, c
   if (theme.cell.bevel) drawBevel(ctx, rect)
 }
 
+/**
+ * Fraction of the cell rect a food diamond spans (leaves a hairline margin so
+ * it reads as a distinct glyph rather than touching the cell edges).
+ */
+const FOOD_DIAMOND_SCALE = 0.86
+
+/**
+ * Draw food as a filled diamond (a square rotated 45°) centered in the cell,
+ * rather than a plain filled square — this is the one shape every token-drawn
+ * theme (mono or colored) uses for food, so it reads as a distinct, compact
+ * "pickup" glyph next to the snake's flat-filled cells and the obstacle's
+ * hollow block, even where a theme's palette gives food and obstacle nearly
+ * the same ink (the classic/mono-plus themes, by design, share one color).
+ * Purely a display shape choice — it reads `rect`/`color`, decides nothing.
+ */
+function drawFoodGlyph(ctx: CanvasRenderingContext2D, rect: CellRect, color: string): void {
+  const centerX = rect.x + rect.size / 2
+  const centerY = rect.y + rect.size / 2
+  const half = (rect.size * FOOD_DIAMOND_SCALE) / 2
+
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.moveTo(centerX, centerY - half)
+  ctx.lineTo(centerX + half, centerY)
+  ctx.lineTo(centerX, centerY + half)
+  ctx.lineTo(centerX - half, centerY)
+  ctx.closePath()
+  ctx.fill()
+}
+
+/** Obstacle block frame thickness, as a fraction of the cell rect's size. */
+const OBSTACLE_FRAME_SCALE = 0.28
+/** Obstacle corner-notch size, as a fraction of the cell rect's size. */
+const OBSTACLE_NOTCH_SCALE = 0.34
+
+/**
+ * Draw an obstacle as a hollow "wall" block: a thick outlined frame with an
+ * open center (the already-painted board background shows through the gap,
+ * so this composites correctly over a flat color, gradient, or scenic image
+ * alike) plus a small filled corner notch for a heavier, static "masonry"
+ * read. Deliberately the opposite silhouette of the food diamond — a static,
+ * frame-shaped glyph vs. a compact centered one — so the two entity types
+ * stay instantly distinguishable by shape alone, independent of any theme's
+ * color choices. Honors the theme's square/rounded cell silhouette so the
+ * frame never looks like a foreign shape against that theme's other cells.
+ */
+function drawObstacleBlock(ctx: CanvasRenderingContext2D, rect: CellRect, theme: Theme, color: string): void {
+  const frame = Math.max(1, Math.round(rect.size * OBSTACLE_FRAME_SCALE))
+  const strokeInset = frame / 2
+  const strokeSize = Math.max(1, rect.size - frame)
+
+  ctx.strokeStyle = color
+  ctx.lineWidth = frame
+
+  if (theme.cell.shape === 'rounded') {
+    const radius = Math.max(0, Math.min(strokeSize / 2, rect.size * theme.cell.radius))
+    ctx.beginPath()
+    ctx.roundRect(rect.x + strokeInset, rect.y + strokeInset, strokeSize, strokeSize, radius)
+    ctx.stroke()
+  } else {
+    ctx.strokeRect(rect.x + strokeInset, rect.y + strokeInset, strokeSize, strokeSize)
+  }
+
+  // Corner notch: a small filled square anchored at the top-left, reading as
+  // a "riveted"/masonry corner accent so the block never reads as a plain
+  // thin outline (or gets mistaken for a grid line) at very small cell sizes.
+  const notch = Math.max(1, Math.round(rect.size * OBSTACLE_NOTCH_SCALE))
+  ctx.fillStyle = color
+  ctx.fillRect(rect.x, rect.y, notch, notch)
+}
+
 /** Alpha of the `background`-colored dimming overlay drawn on top of a scenic `backgroundImage`. */
 const BACKGROUND_IMAGE_OVERLAY_ALPHA = 0.35
 
@@ -284,6 +355,14 @@ function drawGridLines(
   ctx.stroke()
 }
 
+/**
+ * Obstacles never come from a spritesheet (no theme declares an `'obstacle'`
+ * part; the art pipeline's pinned sheets only cover snake segments + food),
+ * so every theme — token-drawn or sprite-based — renders obstacles with the
+ * same hollow-block "wall" glyph. This keeps obstacles legible against sprite
+ * theme backgrounds too (requirement: the obstacle treatment must look
+ * intentional over a loaded skin/scene, not just the token fallback).
+ */
 function drawObstacles(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
@@ -291,7 +370,7 @@ function drawObstacles(
   theme: Theme,
 ): void {
   for (const cell of obstacles) {
-    fillCell(ctx, cellToRect(cell, layout, theme.cell.inset), theme, theme.colors.obstacle)
+    drawObstacleBlock(ctx, cellToRect(cell, layout, theme.cell.inset), theme, theme.colors.obstacle)
   }
 }
 
@@ -305,7 +384,7 @@ function drawFood(
   if (!food) return
   const rect = cellToRect(food, layout, theme.cell.inset)
   if (sprites && drawSpritePart(ctx, sprites, 'food', rect)) return
-  fillCell(ctx, rect, theme, theme.colors.food)
+  drawFoodGlyph(ctx, rect, theme.colors.food)
 }
 
 /** Fraction of the head cell's size used as the eye dot's radius. */

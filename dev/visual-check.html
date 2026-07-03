@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nibble — theme visual check (dev only)</title>
+    <!--
+      Dev-only harness page. Served by the Vite dev server at
+      /dev/visual-check.html; NOT part of the production build (nothing in
+      index.html or src/main.ts references this file, so `vite build` never
+      bundles it as an entry unless explicitly told to).
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #111;
+        color: #eee;
+        font-family: ui-monospace, monospace;
+      }
+      body {
+        padding: 16px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Theme visual check</h1>
+    <div id="visual-check-root"></div>
+    <script type="module" src="./visual-check.ts"></script>
+  </body>
+</html>

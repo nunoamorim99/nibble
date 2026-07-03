@@ -1,34 +1,46 @@
 /**
- * UI shell — the DOM chrome around the canvas: a control bar (mode,
- * pause/resume, leaderboard, themes, shop, sound, new game, coin counter,
- * level-info label), a mode panel, a themes panel, a shop panel, a
- * leaderboard overlay, and a score-submission dialog shown on game over.
- * Built entirely with `document.createElement` calls appended under
- * `#ui-root`; `index.html` stays declarative-minimal.
+ * UI shell — the DOM chrome around the canvas: a full-viewport main-menu
+ * screen (boot lands here), a slim in-game control bar (menu/pause/new-game/
+ * sound/coins/level-info), a themes panel, a shop panel, a leaderboard
+ * overlay, and a score-submission dialog shown on game over. Built entirely
+ * with `document.createElement` calls appended under `#ui-root`;
+ * `index.html` stays declarative-minimal.
  *
  * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
  * direct storage access, no engine imports beyond types re-exported from
- * `src/engine` elsewhere in this layer. Pause/restart/mode-select/theme-select
- * /purchase/mute-toggle are forwarded as abstract callbacks; this module
- * never touches engine, level, theme-registry, economy, or audio internals
- * itself — `ModeOption`, `ThemeOption`, and `ShopItemView` are plain display
- * data owned by this layer, and the sound button only reports clicks: the
- * caller (main.ts) owns the actual `SoundPlayer` and any persisted mute
- * preference. The shell knows nothing about what a mode *means* (level
- * config, rules, engine wiring) — it only renders the option list and
- * reports the selected id upward; the caller owns starting/restarting games.
- * The shell decides nothing about affordability, ownership, or unlocks
- * either: it renders exactly the data it is given (via constructor opts or
- * `updateThemes` / `updateShop` / `setCoins` / `setActiveMode` /
- * `setLevelInfo` / `setMuted`) and reports clicks upward.
+ * `src/engine` elsewhere in this layer. Play/pause/restart/theme-select
+ * /purchase/mute-toggle/menu-open/menu-close are forwarded as abstract
+ * callbacks; this module never touches engine, level, theme-registry,
+ * economy, or audio internals itself — `ModeOption`, `ThemeOption`, and
+ * `ShopItemView` are plain display data owned by this layer, and the sound
+ * control only reports clicks: the caller (main.ts) owns the actual
+ * `SoundPlayer` and any persisted mute preference. The shell knows nothing
+ * about what a mode *means* (level config, rules, engine wiring) — it only
+ * renders the option list and reports the selected id upward via `onPlay`;
+ * the caller owns starting/restarting games. The shell decides nothing about
+ * affordability, ownership, or unlocks either: it renders exactly the data
+ * it is given (via constructor opts or `updateThemes` / `updateShop` /
+ * `setCoins` / `setActiveMode` / `setLevelInfo` / `setMuted`) and reports
+ * clicks upward.
  *
- * Accessibility: every button carries an `aria-label`; every overlay panel
- * is a `role="dialog"` with `aria-modal="true"` and `aria-labelledby`
- * pointing at its title. Opening a panel moves focus into it and traps Tab
- * within it; Escape closes the panel (and stops the keydown from bubbling
- * to the page-level pause handler in `input.ts`); closing restores focus to
- * the control-bar button that opened it. The coin counter and level-info
- * label are `aria-live="polite"` so balance/level changes are announced.
+ * Screen layering (all under `#ui-root`, all `position: fixed`):
+ *   - the menu screen sits at z-index 5, visible by default at creation
+ *     (boot lands on the menu) and toggled via `[hidden]`.
+ *   - the themes/shop/leaderboard/score-submit overlays sit at z-index 10,
+ *     i.e. ABOVE the menu, so choosing "Themes" etc. from the menu opens the
+ *     exact same panel used from in-game, stacked on top of the menu layer.
+ *   - the slim in-game control bar is normal flow (not fixed), matching the
+ *     canvas width, and is only meaningful while the menu is hidden.
+ *
+ * Accessibility: every button carries an `aria-label`; the menu and every
+ * overlay panel is a `role="dialog"` with `aria-modal="true"` and either
+ * `aria-label` (menu) or `aria-labelledby` (panels, pointing at their
+ * title). Showing the menu or opening a panel moves focus to a sensible
+ * first control and traps Tab within it; Escape closes/hides it (and stops
+ * the keydown from bubbling to the page-level pause handler in `input.ts`);
+ * closing restores focus to whichever control opened it. The coin counter
+ * and level-info label are `aria-live="polite"` so balance/level changes
+ * are announced.
  */
 import type { PersistenceAdapter } from '../data'
 
@@ -37,11 +49,13 @@ const DEFAULT_INITIALS = 'AAA'
 const LOCK_MARKER = '\u{1F512}'
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+/** Menu backdrop artwork generated by the art-pipeline agent; missing file falls back to the CSS background-color below (no JS load check needed). */
+const MENU_BACKDROP_URL = '/assets/backgrounds/menu/bg.png'
 
 /** Remembers the last-used initials for the lifetime of the module/session. */
 let lastInitials = DEFAULT_INITIALS
 
-/** Display-only mode entry for the mode-select panel. Opaque id to this layer. */
+/** Display-only mode entry for the menu's PLAY rows. Opaque id to this layer. */
 export interface ModeOption {
   readonly id: string
   readonly name: string
@@ -68,13 +82,13 @@ export interface UiShell {
   setPaused(paused: boolean): void
   /** Reflect the active selection in the themes panel (updates the marked row / stored id even while closed). */
   setActiveTheme(id: string): void
-  /** Reflect the active selection in the mode panel and the bar button label. */
+  /** Reflect the active selection as the menu's marked PLAY row. */
   setActiveMode(id: string): void
   /** Set/replace the small non-interactive level-info bar label (e.g. "LV 3/8"); null hides it. */
   setLevelInfo(text: string | null): void
   /** Update the coin counter in the control bar. */
   setCoins(balance: number): void
-  /** Reflect mute state on the sound button (e.g. "SOUND: ON/OFF"). Caller owns the SoundPlayer + persistence. */
+  /** Reflect mute state on the sound control (e.g. "SOUND: ON/OFF"), in both the bar and the menu. Caller owns the SoundPlayer + persistence. */
   setMuted(muted: boolean): void
   /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
   updateThemes(themes: readonly ThemeOption[]): void
@@ -82,6 +96,8 @@ export interface UiShell {
   updateShop(items: readonly ShopItemView[]): void
   /** Game over with a positive score: open the initials-submit dialog. */
   promptScoreSubmit(score: number): void
+  /** Programmatic open of the main menu screen. Does NOT fire onMenuOpen (that's reserved for the in-game MENU button). */
+  showMenu(): void
   /** Remove all DOM this shell created and detach listeners. */
   dispose(): void
 }
@@ -91,7 +107,6 @@ export function createUiShell(opts: {
   modeId: string
   modes: readonly ModeOption[]
   activeModeId: string
-  onModeSelect(id: string): void
   themes: readonly ThemeOption[]
   activeThemeId: string
   shopItems: readonly ShopItemView[]
@@ -99,10 +114,27 @@ export function createUiShell(opts: {
   onPurchase(itemId: string): void
   onPauseToggle(): void
   onRestart(): void
-  /** User clicked the sound button. The shell shows the button only; main.ts owns the SoundPlayer + persisted preference. */
+  /** User clicked the sound control (bar or menu). The shell shows the control only; main.ts owns the SoundPlayer + persisted preference. */
   onMuteToggle(): void
+  /** User picked a mode's PLAY entry in the menu. The shell hides the menu itself before calling this. */
+  onPlay(modeId: string): void
+  /** The menu became visible via the in-game MENU button. main.ts pauses the live run. */
+  onMenuOpen(): void
+  /** The menu was dismissed without choosing (Escape / close control / RESUME). main.ts resumes. */
+  onMenuClose(): void
 }): UiShell {
-  const { adapter, modeId, onModeSelect, onThemeSelect, onPurchase, onPauseToggle, onRestart, onMuteToggle } = opts
+  const {
+    adapter,
+    modeId,
+    onThemeSelect,
+    onPurchase,
+    onPauseToggle,
+    onRestart,
+    onMuteToggle,
+    onPlay,
+    onMenuOpen,
+    onMenuClose,
+  } = opts
   let modes = opts.modes
   let themes = opts.themes
   let shopItems = opts.shopItems
@@ -120,7 +152,7 @@ export function createUiShell(opts: {
   // bubbling so input.ts's page-level Escape-pauses-game handler never
   // fires while a panel is open), a simple first/last-sentinel focus trap,
   // and focus save/restore so closing a panel returns focus to whichever
-  // control-bar button opened it.
+  // control opened it.
   let dialogUidCounter = 0
 
   function makeDialog(overlay: HTMLDivElement, panel: HTMLDivElement, title: HTMLHeadingElement): {
@@ -181,15 +213,192 @@ export function createUiShell(opts: {
     return { open, close }
   }
 
+  // --- main menu screen ---------------------------------------------------
+  // Full-viewport layer, z-index BELOW the panels (5 vs. their 10) so
+  // Themes/Shop/Leaderboard stack visually above the menu and return focus
+  // to the menu row that opened them. Visible by default: boot lands here.
+  const menuLayer = document.createElement('div')
+  menuLayer.className = 'nibble-menu'
+  menuLayer.setAttribute('role', 'dialog')
+  menuLayer.setAttribute('aria-modal', 'true')
+  menuLayer.setAttribute('aria-label', 'Main menu')
+  menuLayer.tabIndex = -1
+  // The scrim gradient itself lives once in the .nibble-menu CSS rule below;
+  // only the backdrop URL is set here so it stays the single source of truth
+  // for MENU_BACKDROP_URL while the CSS owns the readability treatment.
+  menuLayer.style.setProperty('--nibble-menu-backdrop', `url("${MENU_BACKDROP_URL}")`)
+
+  const menuColumn = document.createElement('div')
+  menuColumn.className = 'nibble-menu-column'
+
+  const menuLogo = document.createElement('img')
+  menuLogo.className = 'nibble-menu-logo'
+  menuLogo.src = '/icons/icon.svg'
+  menuLogo.alt = ''
+  menuLogo.setAttribute('aria-hidden', 'true')
+
+  const menuWordmark = document.createElement('h1')
+  menuWordmark.className = 'nibble-menu-wordmark'
+  menuWordmark.textContent = 'NIBBLE'
+
+  const menuTagline = document.createElement('p')
+  menuTagline.className = 'nibble-menu-tagline'
+  menuTagline.textContent = 'the classic snake, reborn'
+
+  const menuButtons = document.createElement('div')
+  menuButtons.className = 'nibble-menu-buttons'
+
+  const menuModeButtons = new Map<string, HTMLButtonElement>()
+
+  function renderMenuModeButtons(): void {
+    menuModeButtons.forEach((button) => button.remove())
+    menuModeButtons.clear()
+
+    modes.forEach((mode) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'nibble-menu-btn nibble-menu-btn-play'
+      button.addEventListener('click', () => {
+        hideMenu()
+        onPlay(mode.id)
+      })
+      // Insert PLAY rows before the fixed THEMES/SHOP/LEADERBOARD/SOUND block.
+      menuButtons.insertBefore(button, menuSecondaryButtons)
+      menuModeButtons.set(mode.id, button)
+    })
+
+    syncMenuModeLabels()
+  }
+
+  function syncMenuModeLabels(): void {
+    modes.forEach((mode) => {
+      const button = menuModeButtons.get(mode.id)
+      if (!button) return
+      const isActive = mode.id === activeModeId
+      button.textContent = `PLAY ${mode.name.toUpperCase()}`
+      button.classList.toggle('nibble-menu-btn-active', isActive)
+      button.setAttribute(
+        'aria-label',
+        isActive ? `Play ${mode.name} (current mode)` : `Play ${mode.name}`,
+      )
+    })
+  }
+
+  // Sentinel marking where the fixed (non-mode) rows begin, so PLAY rows can
+  // always be (re)inserted before it regardless of how many modes there are.
+  const menuSecondaryButtons = document.createElement('div')
+  menuSecondaryButtons.className = 'nibble-menu-secondary'
+  menuSecondaryButtons.hidden = true
+
+  const menuThemesButton = document.createElement('button')
+  menuThemesButton.type = 'button'
+  menuThemesButton.className = 'nibble-menu-btn'
+  menuThemesButton.textContent = 'THEMES'
+  menuThemesButton.setAttribute('aria-label', 'Choose theme')
+  menuThemesButton.addEventListener('click', () => openThemes(menuThemesButton))
+
+  const menuShopButton = document.createElement('button')
+  menuShopButton.type = 'button'
+  menuShopButton.className = 'nibble-menu-btn'
+  menuShopButton.textContent = 'SHOP'
+  menuShopButton.setAttribute('aria-label', 'Open shop')
+  menuShopButton.addEventListener('click', () => openShop(menuShopButton))
+
+  const menuLeaderboardButton = document.createElement('button')
+  menuLeaderboardButton.type = 'button'
+  menuLeaderboardButton.className = 'nibble-menu-btn'
+  menuLeaderboardButton.textContent = 'LEADERBOARD'
+  menuLeaderboardButton.setAttribute('aria-label', 'Open leaderboard')
+  menuLeaderboardButton.addEventListener('click', () => openLeaderboard(menuLeaderboardButton))
+
+  const menuSoundButton = document.createElement('button')
+  menuSoundButton.type = 'button'
+  menuSoundButton.className = 'nibble-menu-btn'
+  menuSoundButton.addEventListener('click', () => onMuteToggle())
+
+  menuButtons.append(menuSecondaryButtons)
+  menuButtons.append(menuThemesButton, menuShopButton, menuLeaderboardButton, menuSoundButton)
+
+  const menuResumeButton = document.createElement('button')
+  menuResumeButton.type = 'button'
+  menuResumeButton.className = 'nibble-menu-resume'
+  menuResumeButton.textContent = 'RESUME'
+  menuResumeButton.setAttribute('aria-label', 'Resume without choosing')
+  menuResumeButton.addEventListener('click', () => {
+    hideMenu()
+    onMenuClose()
+  })
+
+  menuColumn.append(menuLogo, menuWordmark, menuTagline, menuButtons, menuResumeButton)
+  menuLayer.appendChild(menuColumn)
+  root.appendChild(menuLayer)
+
+  renderMenuModeButtons()
+
+  let menuOpenerForFocusRestore: HTMLElement | null = null
+
+  function menuFocusables(): HTMLElement[] {
+    return Array.from(menuLayer.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (el) => !el.hidden && el.offsetParent !== null,
+    )
+  }
+
+  function onMenuKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+      event.preventDefault()
+      hideMenu()
+      onMenuClose()
+      return
+    }
+    if (event.key === 'Tab') {
+      const items = menuFocusables()
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+  }
+
+  /** Show the menu layer and move focus in. Shared by showMenu() and the bar's MENU button; callers decide whether to fire onMenuOpen. */
+  function displayMenu(opener: HTMLElement | null): void {
+    menuOpenerForFocusRestore = opener
+    menuLayer.hidden = false
+    menuLayer.addEventListener('keydown', onMenuKeydown)
+    const firstModeButton = modes.length > 0 ? menuModeButtons.get(modes[0].id) : undefined
+    const target = firstModeButton ?? menuFocusables()[0] ?? menuLayer
+    target.focus()
+  }
+
+  function hideMenu(): void {
+    menuLayer.hidden = true
+    menuLayer.removeEventListener('keydown', onMenuKeydown)
+    menuOpenerForFocusRestore?.focus()
+    menuOpenerForFocusRestore = null
+  }
+
   // --- control bar ---------------------------------------------------
+  // Declutered: the menu now owns navigation (mode choice, themes, shop,
+  // leaderboard). The in-game bar is just MENU | Pause | New Game | Sound |
+  // coins | level-info.
   const bar = document.createElement('div')
   bar.className = 'nibble-bar'
 
-  const modeButton = document.createElement('button')
-  modeButton.type = 'button'
-  modeButton.className = 'nibble-btn'
-  modeButton.setAttribute('aria-label', 'Choose game mode')
-  modeButton.addEventListener('click', () => openModes(modeButton))
+  const menuButton = document.createElement('button')
+  menuButton.type = 'button'
+  menuButton.className = 'nibble-btn'
+  menuButton.textContent = 'Menu'
+  menuButton.setAttribute('aria-label', 'Open main menu')
+  menuButton.addEventListener('click', () => {
+    displayMenu(menuButton)
+    onMenuOpen()
+  })
 
   const pauseButton = document.createElement('button')
   pauseButton.type = 'button'
@@ -197,27 +406,6 @@ export function createUiShell(opts: {
   pauseButton.textContent = 'Pause'
   pauseButton.setAttribute('aria-label', 'Pause game')
   pauseButton.addEventListener('click', () => onPauseToggle())
-
-  const leaderboardButton = document.createElement('button')
-  leaderboardButton.type = 'button'
-  leaderboardButton.className = 'nibble-btn'
-  leaderboardButton.textContent = 'Leaderboard'
-  leaderboardButton.setAttribute('aria-label', 'Open leaderboard')
-  leaderboardButton.addEventListener('click', () => openLeaderboard(leaderboardButton))
-
-  const themesButton = document.createElement('button')
-  themesButton.type = 'button'
-  themesButton.className = 'nibble-btn'
-  themesButton.textContent = 'Themes'
-  themesButton.setAttribute('aria-label', 'Choose theme')
-  themesButton.addEventListener('click', () => openThemes(themesButton))
-
-  const shopButton = document.createElement('button')
-  shopButton.type = 'button'
-  shopButton.className = 'nibble-btn'
-  shopButton.textContent = 'Shop'
-  shopButton.setAttribute('aria-label', 'Open shop')
-  shopButton.addEventListener('click', () => openShop(shopButton))
 
   const soundButton = document.createElement('button')
   soundButton.type = 'button'
@@ -242,121 +430,25 @@ export function createUiShell(opts: {
   levelInfoLabel.setAttribute('aria-live', 'polite')
   levelInfoLabel.hidden = true
 
-  bar.append(
-    modeButton,
-    pauseButton,
-    leaderboardButton,
-    themesButton,
-    shopButton,
-    soundButton,
-    restartButton,
-    coinCounter,
-    levelInfoLabel,
-  )
+  bar.append(menuButton, pauseButton, soundButton, restartButton, coinCounter, levelInfoLabel)
   root.appendChild(bar)
 
-  function syncSoundButtonLabel(muted: boolean): void {
-    soundButton.textContent = muted ? 'SOUND: OFF' : 'SOUND: ON'
-    soundButton.setAttribute('aria-label', muted ? 'Sound is off. Click to turn on.' : 'Sound is on. Click to turn off.')
+  function syncSoundLabel(muted: boolean): void {
+    const text = muted ? 'SOUND: OFF' : 'SOUND: ON'
+    const ariaLabel = muted ? 'Sound is off. Click to turn on.' : 'Sound is on. Click to turn off.'
+    soundButton.textContent = text
+    soundButton.setAttribute('aria-label', ariaLabel)
     soundButton.setAttribute('aria-pressed', String(!muted))
+    menuSoundButton.textContent = text
+    menuSoundButton.setAttribute('aria-label', ariaLabel)
+    menuSoundButton.setAttribute('aria-pressed', String(!muted))
   }
-  syncSoundButtonLabel(false)
+  syncSoundLabel(false)
 
   function renderCoinCounter(balance: number): void {
     coinCounter.textContent = `◉ ${balance}`
   }
   renderCoinCounter(0)
-
-  function findModeName(id: string): string {
-    return modes.find((mode) => mode.id === id)?.name ?? id
-  }
-
-  function syncModeButtonLabel(): void {
-    modeButton.textContent = `MODE: ${findModeName(activeModeId).toUpperCase()}`
-  }
-  syncModeButtonLabel()
-
-  // --- mode panel -------------------------------------------------------
-  const modesOverlay = document.createElement('div')
-  modesOverlay.className = 'nibble-overlay'
-  modesOverlay.hidden = true
-
-  const modesPanel = document.createElement('div')
-  modesPanel.className = 'nibble-panel'
-
-  const modesTitle = document.createElement('h2')
-  modesTitle.className = 'nibble-panel-title'
-  modesTitle.textContent = 'Mode'
-
-  const modesList = document.createElement('ol')
-  modesList.className = 'nibble-modes-list'
-
-  const modesCloseButton = document.createElement('button')
-  modesCloseButton.type = 'button'
-  modesCloseButton.className = 'nibble-btn'
-  modesCloseButton.textContent = 'Close'
-  modesCloseButton.setAttribute('aria-label', 'Close mode selection')
-  modesCloseButton.addEventListener('click', () => closeModes())
-
-  modesPanel.append(modesTitle, modesList, modesCloseButton)
-  modesOverlay.appendChild(modesPanel)
-  root.appendChild(modesOverlay)
-
-  const modesDialog = makeDialog(modesOverlay, modesPanel, modesTitle)
-
-  const modeRowButtons = new Map<string, HTMLButtonElement>()
-
-  function renderModeRows(): void {
-    modesList.replaceChildren()
-    modeRowButtons.clear()
-
-    if (modes.length === 0) {
-      const empty = document.createElement('li')
-      empty.className = 'nibble-modes-empty'
-      empty.textContent = 'No modes available.'
-      modesList.appendChild(empty)
-      return
-    }
-
-    modes.forEach((mode) => {
-      const row = document.createElement('li')
-      row.className = 'nibble-modes-row'
-
-      const rowButton = document.createElement('button')
-      rowButton.type = 'button'
-      rowButton.className = 'nibble-mode-btn'
-      rowButton.setAttribute('aria-label', `Select ${mode.name} mode`)
-      rowButton.addEventListener('click', () => {
-        onModeSelect(mode.id)
-        closeModes()
-      })
-
-      row.appendChild(rowButton)
-      modesList.appendChild(row)
-      modeRowButtons.set(mode.id, rowButton)
-    })
-
-    syncModeRowLabels()
-  }
-
-  function syncModeRowLabels(): void {
-    modes.forEach((mode) => {
-      const rowButton = modeRowButtons.get(mode.id)
-      if (!rowButton) return
-      const isActive = mode.id === activeModeId
-      rowButton.textContent = isActive ? `▶ ${mode.name}` : mode.name
-      rowButton.classList.toggle('nibble-mode-btn-active', isActive)
-    })
-  }
-
-  function openModes(opener: HTMLElement): void {
-    renderModeRows()
-    modesDialog.open(opener)
-  }
-
-  function closeModes(): void {
-    modesDialog.close()
-  }
 
   // --- leaderboard overlay -------------------------------------------
   const leaderboardOverlay = document.createElement('div')
@@ -697,8 +789,7 @@ export function createUiShell(opts: {
 
     setActiveMode(id) {
       activeModeId = id
-      syncModeButtonLabel()
-      syncModeRowLabels()
+      syncMenuModeLabels()
     },
 
     setLevelInfo(text) {
@@ -716,7 +807,7 @@ export function createUiShell(opts: {
     },
 
     setMuted(muted) {
-      syncSoundButtonLabel(muted)
+      syncSoundLabel(muted)
     },
 
     updateThemes(nextThemes) {
@@ -737,9 +828,13 @@ export function createUiShell(opts: {
       initialsInput.select()
     },
 
+    showMenu() {
+      displayMenu(null)
+    },
+
     dispose() {
       bar.remove()
-      modesOverlay.remove()
+      menuLayer.remove()
       leaderboardOverlay.remove()
       themesOverlay.remove()
       shopOverlay.remove()
@@ -813,6 +908,121 @@ function injectStyles(): void {
       text-transform: uppercase;
       user-select: none;
     }
+    /* --- main menu screen ------------------------------------------- */
+    .nibble-menu {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow-y: auto;
+      /* #12140f is the guaranteed-visible fallback: if bg.png 404s the
+         gradient still paints (solid colors under it), and if the browser
+         can't paint the gradient at all this background-color still reads. */
+      background-color: #12140f;
+      background-image: linear-gradient(180deg, rgba(10,11,8,0.55) 0%, rgba(10,11,8,0.75) 55%, rgba(10,11,8,0.92) 100%),
+        var(--nibble-menu-backdrop, none);
+      background-size: cover;
+      background-position: center;
+      padding: 2rem 1rem;
+    }
+    .nibble-menu-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+      max-width: 22rem;
+    }
+    .nibble-menu-logo {
+      width: 96px;
+      height: 96px;
+      margin-bottom: 0.5rem;
+      filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
+    }
+    .nibble-menu-wordmark {
+      margin: 0;
+      font-family: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+      font-size: clamp(2.25rem, 9vw, 3.25rem);
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      color: #c4cfa1;
+      text-shadow: 0 2px 18px rgba(196, 207, 161, 0.35), 0 2px 4px rgba(0, 0, 0, 0.6);
+      text-align: center;
+    }
+    .nibble-menu-tagline {
+      margin: 0 0 1.5rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #e8f0c4;
+      opacity: 0.85;
+      text-align: center;
+    }
+    .nibble-menu-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      width: 100%;
+    }
+    .nibble-menu-btn {
+      width: 100%;
+      background: rgba(26, 28, 22, 0.85);
+      color: #c4cfa1;
+      border: 1px solid #c4cfa1;
+      border-radius: 4px;
+      padding: 0.85rem 1rem;
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-align: center;
+      cursor: pointer;
+    }
+    .nibble-menu-btn:hover,
+    .nibble-menu-btn:focus-visible {
+      background: #c4cfa1;
+      color: #1a1c16;
+      outline: none;
+    }
+    .nibble-menu-btn:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
+    }
+    .nibble-menu-btn-play {
+      border-color: #e8f0c4;
+      background: rgba(196, 207, 161, 0.12);
+    }
+    .nibble-menu-btn-active {
+      border-width: 2px;
+      color: #e8f0c4;
+    }
+    .nibble-menu-resume {
+      margin-top: 1rem;
+      background: transparent;
+      color: #c4cfa1;
+      border: none;
+      padding: 0.4rem 0.75rem;
+      font: inherit;
+      font-size: 0.8rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      opacity: 0.75;
+      cursor: pointer;
+    }
+    .nibble-menu-resume:hover,
+    .nibble-menu-resume:focus-visible {
+      opacity: 1;
+      outline: none;
+    }
+    .nibble-menu-resume:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
+    }
     .nibble-overlay {
       position: fixed;
       inset: 0;
@@ -859,51 +1069,6 @@ function injectStyles(): void {
       text-align: center;
       opacity: 0.7;
       padding: 0.5rem 0;
-    }
-    .nibble-modes-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      max-height: 40vh;
-      overflow-y: auto;
-    }
-    .nibble-modes-row {
-      display: flex;
-    }
-    .nibble-modes-empty {
-      text-align: center;
-      opacity: 0.7;
-      padding: 0.5rem 0;
-    }
-    .nibble-mode-btn {
-      flex: 1;
-      background: #1a1c16;
-      color: #c4cfa1;
-      border: 1px solid #c4cfa1;
-      border-radius: 2px;
-      padding: 0.4rem 0.6rem;
-      font: inherit;
-      font-size: 0.85rem;
-      letter-spacing: 0.05em;
-      text-align: left;
-      cursor: pointer;
-    }
-    .nibble-mode-btn:hover,
-    .nibble-mode-btn:focus-visible {
-      background: #2a2d22;
-      outline: none;
-    }
-    .nibble-mode-btn:focus-visible {
-      outline: 2px solid #e8f0c4;
-      outline-offset: 2px;
-    }
-    .nibble-mode-btn-active {
-      border-color: #e8f0c4;
-      color: #e8f0c4;
-      font-weight: bold;
     }
     .nibble-themes-list {
       list-style: none;
@@ -1038,9 +1203,10 @@ function injectStyles(): void {
     }
     @media (prefers-reduced-motion: no-preference) {
       .nibble-btn,
-      .nibble-mode-btn,
+      .nibble-menu-btn,
+      .nibble-menu-resume,
       .nibble-theme-btn {
-        transition: background-color 120ms ease, color 120ms ease;
+        transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
       }
       .nibble-overlay {
         transition: opacity 120ms ease;
@@ -1050,8 +1216,9 @@ function injectStyles(): void {
       }
     }
     /* The hidden attribute only maps to a UA-stylesheet display: none, which
-       author display rules (e.g. .nibble-overlay's flex) silently override —
-       without this reset every overlay renders permanently open. */
+       author display rules (e.g. .nibble-menu's / .nibble-overlay's flex)
+       silently override — without this reset the menu and every overlay
+       renders permanently open. */
     [hidden] {
       display: none !important;
     }

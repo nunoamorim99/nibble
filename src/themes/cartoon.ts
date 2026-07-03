@@ -14,8 +14,14 @@ const BODY_GREEN = '#5bb450'
 const HEAD_GREEN = '#79cf5f'
 /** Fallback warm-red food color, used only until the sheet loads. */
 const FOOD_RED = '#e8543f'
-/** Warm brown obstacle tone. */
-const OBSTACLE_BROWN = '#8a5a3b'
+/**
+ * Dark, desaturated grey-brown "stone" obstacle tone — deliberately darker
+ * and flatter than the bright, saturated food/snake hues (contrast ~2.1-4.0
+ * against them) so a masonry block never blends into a warm red apple or
+ * green snake segment the way the old warmer `#8a5a3b` brown nearly did
+ * (contrast ~1.6 against food).
+ */
+const OBSTACLE_STONE = '#57534c'
 /** Dark warm text, readable over the sunny palette. */
 const DARK_TEXT = '#3a2a1a'
 /** White eye dot, used only in the token fallback (sprites draw their own eye). */
@@ -31,7 +37,7 @@ export const cartoonTheme: Theme = {
     snakeHead: HEAD_GREEN,
     snakeBody: BODY_GREEN,
     food: FOOD_RED,
-    obstacle: OBSTACLE_BROWN,
+    obstacle: OBSTACLE_STONE,
     hudText: DARK_TEXT,
     overlayText: DARK_TEXT,
     overlayBackdrop: 'rgba(253, 232, 182, 0.85)',
