@@ -6,7 +6,9 @@
  * key code or touch event ever crosses into `src/engine`.
  *
  * No DOM leaks outward either: callers get back a small controller with
- * `takeTurn()` and `dispose()`, nothing else.
+ * `takeTurn()`, `pushTurn()`, and `dispose()`, nothing else. `pushTurn()` is
+ * the same abstract-Direction entry point used by on-screen controls (e.g.
+ * the shell's D-pad) — it shares the keyboard/swipe queue, dedupe, and cap.
  */
 import type { Direction } from '../engine'
 
@@ -27,6 +29,8 @@ const KEY_DIRECTIONS: Record<string, Direction> = {
 export interface InputController {
   /** Dequeue ONE buffered turn. The loop calls this once per tick. */
   takeTurn(): Direction | undefined
+  /** Inject an abstract turn from on-screen controls (e.g. the D-pad); same dedupe + queue cap as keyboard/swipe turns. */
+  pushTurn(dir: Direction): void
   /** Remove all listeners this controller attached. */
   dispose(): void
 }
@@ -113,6 +117,9 @@ export function createInputController(opts: {
   return {
     takeTurn() {
       return queue.shift()
+    },
+    pushTurn(dir) {
+      enqueue(dir)
     },
     dispose() {
       window.removeEventListener('keydown', onKeyDown)

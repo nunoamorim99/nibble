@@ -38,6 +38,7 @@ const SETTING_THEME = 'theme'
 const SETTING_MODE = 'mode'
 const SETTING_LEVEL_PROGRESS = 'levels:highest'
 const SETTING_MUTED = 'muted'
+const SETTING_TOUCH_CONTROLS = 'touch-controls'
 
 type GameMode = { readonly kind: 'classic' } | { readonly kind: 'level'; readonly index: number }
 
@@ -56,6 +57,9 @@ let activeTheme: Theme = classicTheme
 let mode: GameMode = { kind: 'classic' }
 let highestLevelUnlocked = 0
 let paused = false
+// On-screen D-pad default: visible on coarse-pointer (touch) devices, hidden
+// on desktop; the persisted setting overrides this at boot.
+let touchControls = window.matchMedia('(pointer: coarse)').matches
 // Ready gate: a fresh round holds still until the player's first turn input,
 // so opening the page (or advancing a level) never runs the snake unattended.
 let awaitingStart = true
@@ -114,6 +118,12 @@ function toggleMute(): void {
   sound.setMuted(muted)
   shell.setMuted(muted)
   void storage.setSetting(SETTING_MUTED, muted ? 'true' : 'false')
+}
+
+function toggleTouchControls(): void {
+  touchControls = !touchControls
+  shell.setTouchControls(touchControls)
+  void storage.setSetting(SETTING_TOUCH_CONTROLS, touchControls ? 'on' : 'off')
 }
 
 function togglePause(): void {
@@ -245,6 +255,8 @@ const shell = createUiShell({
   },
   onPurchase: handlePurchase,
   onMuteToggle: toggleMute,
+  onDirection: (dir) => input.pushTurn(dir),
+  onTouchControlsToggle: toggleTouchControls,
   onPauseToggle: togglePause,
   onRestart: () => requestRestart(true),
 })
@@ -253,6 +265,12 @@ void storage.getSetting(SETTING_MUTED).then((saved) => {
   const muted = saved === 'true'
   sound.setMuted(muted)
   shell.setMuted(muted)
+})
+
+void storage.getSetting(SETTING_TOUCH_CONTROLS).then((saved) => {
+  if (saved === 'on') touchControls = true
+  else if (saved === 'off') touchControls = false
+  shell.setTouchControls(touchControls)
 })
 
 void storage.getSetting(SETTING_THEME).then((saved) => {

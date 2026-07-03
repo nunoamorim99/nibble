@@ -57,17 +57,29 @@ for (const vp of VIEWPORTS) {
     `${vp.name}: ${overflowX}, ${overflowY}, canvas ${metrics.canvasCssW}x${metrics.canvasCssH} in ${metrics.innerW}x${metrics.innerH}`,
   )
 
-  // On the portrait viewport, swipe down to start the round and capture gameplay
+  // On the portrait viewport, start the round via the on-screen D-pad when
+  // present (falling back to a swipe) and capture gameplay
   if (vp.name === 'portrait-390') {
     try {
-      const cx = Math.round(vp.width / 2)
-      const cy = Math.round(vp.height / 2)
-      await page.touchscreen.touchStart(cx, cy - 60)
-      await page.touchscreen.touchMove(cx, cy + 60)
-      await page.touchscreen.touchEnd()
+      const padTapped = await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll('.nibble-dpad button')]
+        const down = buttons.find((b) =>
+          (b.getAttribute('aria-label') || '').toLowerCase().includes('down'),
+        )
+        if (!down || down.closest('[hidden]')) return false
+        down.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+        return true
+      })
+      if (!padTapped) {
+        const cx = Math.round(vp.width / 2)
+        const cy = Math.round(vp.height / 2)
+        await page.touchscreen.touchStart(cx, cy - 60)
+        await page.touchscreen.touchMove(cx, cy + 60)
+        await page.touchscreen.touchEnd()
+      }
       await new Promise((r) => setTimeout(r, 1200))
       await page.screenshot({ path: `${OUT}/m-${vp.name}-playing.png` })
-      console.log(`${vp.name}: swipe-to-start captured`)
+      console.log(`${vp.name}: round started via ${padTapped ? 'D-pad tap' : 'swipe'}`)
     } catch (err) {
       console.log(`${vp.name}: touch simulation unavailable (${err.message})`)
     }

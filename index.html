@@ -64,6 +64,33 @@
           --nibble-bar-allowance: 7.5rem;
         }
       }
+      /* On-screen D-pad (src/ui/shell.ts) sits below the bar in normal flow
+         and needs its own ~9.5rem of vertical room (two 64px rows + gaps +
+         margins) added on top of the bar allowance above, or the D-pad would
+         push the page into scroll. ui-shell.ts toggles this class on <html>
+         from setTouchControls(); it only applies in portrait/normal layouts —
+         the shell's own @media (max-height: 480px) query switches the D-pad
+         to position: fixed instead of adding height, so the allowance is
+         intentionally NOT bumped for that short-viewport case (growing it
+         there would shrink the board below playable size). */
+      html.nibble-touchpad-on {
+        --nibble-bar-allowance: 16rem;
+      }
+      @media (max-width: 480px) {
+        html.nibble-touchpad-on {
+          --nibble-bar-allowance: 17rem;
+        }
+      }
+      @media (max-height: 480px) {
+        html.nibble-touchpad-on {
+          --nibble-bar-allowance: 6.5rem;
+        }
+      }
+      @media (max-height: 480px) and (max-width: 480px) {
+        html.nibble-touchpad-on {
+          --nibble-bar-allowance: 7.5rem;
+        }
+      }
       html,
       body {
         height: 100%;

@@ -23,6 +23,17 @@
  * `setCoins` / `setActiveMode` / `setLevelInfo` / `setMuted`) and reports
  * clicks upward.
  *
+ * On-screen D-pad: a `.nibble-dpad` cluster of four directional buttons,
+ * hidden by default and shown via `setTouchControls(true)`. Same
+ * caller-owns-the-decision pattern as sound — this module only renders the
+ * pad and the menu's "TOUCH PAD" toggle row and reports `onDirection` /
+ * `onTouchControlsToggle` upward; main.ts decides whether the pad should be
+ * on (persisted setting / pointer coarseness) and forwards `onDirection`
+ * into the same `InputController.pushTurn()` queue the keyboard/swipe
+ * handlers use. `PadDirection` is structurally identical to the engine's
+ * `Direction` but declared locally so this layer never imports engine types
+ * for a purely presentational control.
+ *
  * Screen layering (all under `#ui-root`, all `position: fixed`):
  *   - the menu screen sits at z-index 5, visible by default at creation
  *     (boot lands on the menu) and toggled via `[hidden]`.
@@ -77,6 +88,13 @@ export interface ShopItemView {
   readonly owned: boolean
 }
 
+/**
+ * Structurally identical to the engine's `Direction` — declared locally so
+ * this layer stays decoupled from `src/engine` for what is purely a
+ * presentational on-screen control.
+ */
+export type PadDirection = 'up' | 'down' | 'left' | 'right'
+
 export interface UiShell {
   /** Reflect paused/running state on the pause button label. */
   setPaused(paused: boolean): void
@@ -90,6 +108,8 @@ export interface UiShell {
   setCoins(balance: number): void
   /** Reflect mute state on the sound control (e.g. "SOUND: ON/OFF"), in both the bar and the menu. Caller owns the SoundPlayer + persistence. */
   setMuted(muted: boolean): void
+  /** Show/hide the on-screen D-pad and sync the menu's "TOUCH PAD: ON/OFF" label. Caller (main.ts) owns the persisted preference. */
+  setTouchControls(enabled: boolean): void
   /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
   updateThemes(themes: readonly ThemeOption[]): void
   /** Replace shop item states; re-renders in place if the shop panel is open. */
@@ -116,6 +136,10 @@ export function createUiShell(opts: {
   onRestart(): void
   /** User clicked the sound control (bar or menu). The shell shows the control only; main.ts owns the SoundPlayer + persisted preference. */
   onMuteToggle(): void
+  /** A D-pad arrow was pressed. Forwarded verbatim; main.ts routes it into the InputController's turn queue. */
+  onDirection(dir: PadDirection): void
+  /** The menu's "TOUCH PAD" toggle row was clicked. The shell shows the control only; main.ts owns the persisted preference and decides the resulting state via setTouchControls(). */
+  onTouchControlsToggle(): void
   /** User picked a mode's PLAY entry in the menu. The shell hides the menu itself before calling this. */
   onPlay(modeId: string): void
   /** The menu became visible via the in-game MENU button. main.ts pauses the live run. */
@@ -131,6 +155,8 @@ export function createUiShell(opts: {
     onPauseToggle,
     onRestart,
     onMuteToggle,
+    onDirection,
+    onTouchControlsToggle,
     onPlay,
     onMenuOpen,
     onMenuClose,
@@ -316,8 +342,19 @@ export function createUiShell(opts: {
   menuSoundButton.className = 'nibble-menu-btn'
   menuSoundButton.addEventListener('click', () => onMuteToggle())
 
+  const menuTouchPadButton = document.createElement('button')
+  menuTouchPadButton.type = 'button'
+  menuTouchPadButton.className = 'nibble-menu-btn'
+  menuTouchPadButton.addEventListener('click', () => onTouchControlsToggle())
+
   menuButtons.append(menuSecondaryButtons)
-  menuButtons.append(menuThemesButton, menuShopButton, menuLeaderboardButton, menuSoundButton)
+  menuButtons.append(
+    menuThemesButton,
+    menuShopButton,
+    menuLeaderboardButton,
+    menuSoundButton,
+    menuTouchPadButton,
+  )
 
   const menuResumeButton = document.createElement('button')
   menuResumeButton.type = 'button'
@@ -433,6 +470,55 @@ export function createUiShell(opts: {
   bar.append(menuButton, pauseButton, soundButton, restartButton, coinCounter, levelInfoLabel)
   root.appendChild(bar)
 
+  // --- on-screen D-pad -------------------------------------------------
+  // Diamond cluster of four direction buttons. Hidden by default ([hidden]);
+  // main.ts decides when to reveal it via setTouchControls(). Sits below the
+  // bar in normal document flow (portrait/normal layouts); a landscape media
+  // query below repositions it to a fixed thumb-zone corner instead.
+  const dpad = document.createElement('div')
+  dpad.className = 'nibble-dpad'
+  dpad.hidden = true
+
+  function createPadButton(dir: PadDirection, label: string, glyph: string): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    // The per-direction class also carries the grid-area placement in CSS
+    // (single source of truth for the diamond layout — see .nibble-dpad-btn-*
+    // below), so this class list positions AND styles the button.
+    button.className = `nibble-dpad-btn nibble-dpad-btn-${dir}`
+    button.textContent = glyph
+    button.setAttribute('aria-label', label)
+    // pointerdown (not click): a turn is a single intent and latency matters.
+    // preventDefault kills the synthesized ghost click/focus flicker that
+    // otherwise follows a touch pointerdown on some browsers.
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      button.classList.add('nibble-dpad-btn-pressed')
+      onDirection(dir)
+    })
+    const clearPressed = (): void => button.classList.remove('nibble-dpad-btn-pressed')
+    button.addEventListener('pointerup', clearPressed)
+    button.addEventListener('pointerleave', clearPressed)
+    button.addEventListener('pointercancel', clearPressed)
+    // No 'click' handler by design — pointerdown already fired the turn;
+    // handling click too would double-fire on pointer devices that also
+    // synthesize a click after pointerup.
+    return button
+  }
+
+  const dpadUp = createPadButton('up', 'Turn up', '▲')
+  const dpadLeft = createPadButton('left', 'Turn left', '◀')
+  const dpadRight = createPadButton('right', 'Turn right', '▶')
+  const dpadDown = createPadButton('down', 'Turn down', '▼')
+
+  dpad.append(dpadUp, dpadLeft, dpadRight, dpadDown)
+  root.appendChild(dpad)
+
+  function syncTouchPadVisibility(enabled: boolean): void {
+    dpad.hidden = !enabled
+    document.documentElement.classList.toggle('nibble-touchpad-on', enabled)
+  }
+
   function syncSoundLabel(muted: boolean): void {
     const text = muted ? 'SOUND: OFF' : 'SOUND: ON'
     const ariaLabel = muted ? 'Sound is off. Click to turn on.' : 'Sound is on. Click to turn off.'
@@ -444,6 +530,17 @@ export function createUiShell(opts: {
     menuSoundButton.setAttribute('aria-pressed', String(!muted))
   }
   syncSoundLabel(false)
+
+  function syncTouchPadLabel(enabled: boolean): void {
+    const text = enabled ? 'TOUCH PAD: ON' : 'TOUCH PAD: OFF'
+    const ariaLabel = enabled
+      ? 'On-screen touch pad is on. Click to turn off.'
+      : 'On-screen touch pad is off. Click to turn on.'
+    menuTouchPadButton.textContent = text
+    menuTouchPadButton.setAttribute('aria-label', ariaLabel)
+    menuTouchPadButton.setAttribute('aria-pressed', String(enabled))
+  }
+  syncTouchPadLabel(false)
 
   function renderCoinCounter(balance: number): void {
     coinCounter.textContent = `◉ ${balance}`
@@ -810,6 +907,11 @@ export function createUiShell(opts: {
       syncSoundLabel(muted)
     },
 
+    setTouchControls(enabled) {
+      syncTouchPadLabel(enabled)
+      syncTouchPadVisibility(enabled)
+    },
+
     updateThemes(nextThemes) {
       themes = nextThemes
       if (!themesOverlay.hidden) renderThemeRows()
@@ -834,6 +936,8 @@ export function createUiShell(opts: {
 
     dispose() {
       bar.remove()
+      dpad.remove()
+      document.documentElement.classList.remove('nibble-touchpad-on')
       menuLayer.remove()
       leaderboardOverlay.remove()
       themesOverlay.remove()
@@ -939,6 +1043,75 @@ function injectStyles(): void {
       .nibble-level-info {
         padding: 0.35rem 0.5rem;
         font-size: 0.75rem;
+      }
+    }
+    /* --- on-screen D-pad ---------------------------------------------
+       Portrait/normal: normal document flow, directly below the bar,
+       centered — index.html grows --nibble-bar-allowance under
+       html.nibble-touchpad-on (toggled by setTouchControls) so the board,
+       bar, and pad all fit with zero scrolling.
+       Landscape (short viewport): anchored to the bottom-right thumb zone
+       via position: fixed instead of growing the allowance, since squeezing
+       more vertical chrome there would shrink the board below playable size;
+       see the @media (max-height: 480px) override below. */
+    .nibble-dpad {
+      display: grid;
+      grid-template-columns: 64px 64px 64px;
+      grid-template-rows: 64px 64px;
+      grid-template-areas:
+        '.    up    .'
+        'left down  right';
+      gap: 0.4rem;
+      justify-content: center;
+      margin: 0.5rem auto 0.75rem;
+      touch-action: manipulation;
+    }
+    .nibble-dpad-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 64px;
+      height: 64px;
+      background: rgba(26, 28, 22, 0.55);
+      color: #c4cfa1;
+      border: 1px solid rgba(196, 207, 161, 0.8);
+      border-radius: 8px;
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+      box-sizing: border-box;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .nibble-dpad-btn-up { grid-area: up; }
+    .nibble-dpad-btn-left { grid-area: left; }
+    .nibble-dpad-btn-right { grid-area: right; }
+    .nibble-dpad-btn-down { grid-area: down; }
+    .nibble-dpad-btn:hover,
+    .nibble-dpad-btn:focus-visible {
+      background: rgba(196, 207, 161, 0.25);
+      outline: none;
+    }
+    .nibble-dpad-btn:focus-visible {
+      outline: 2px solid #e8f0c4;
+      outline-offset: 2px;
+    }
+    .nibble-dpad-btn-pressed {
+      background: #c4cfa1;
+      color: #1a1c16;
+    }
+    /* Landscape / short viewport: fixed thumb-zone corner instead of extra
+       in-flow height, semi-translucent so it blocks as little as possible,
+       safe-area-inset aware for notched devices held sideways. */
+    @media (max-height: 480px) {
+      .nibble-dpad {
+        position: fixed;
+        right: max(0.75rem, env(safe-area-inset-right));
+        bottom: max(0.75rem, env(safe-area-inset-bottom));
+        margin: 0;
+        z-index: 4;
+        opacity: 0.85;
       }
     }
     /* --- main menu screen ------------------------------------------- */
