@@ -10,14 +10,19 @@
 ![Canvas](https://img.shields.io/badge/HTML5%20Canvas-E34F26?style=flat&logo=html5&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
+<br>
+
+[![Nibble — a stylized green snake rearing over a red apple on a glowing arcade grid](assets/readme/cover.jpg)](https://nunoamorim99.github.io/nibble/)
+
+### [▶️ Play it now — nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/)
+
+_Free in your browser, nothing to install — or add it to your home screen and play offline._
+
 </div>
 
 ---
 
 Nibble is a from-scratch take on the game everyone played on their Nokia 3310. It began as a learning project — a way to understand how these games actually work under the hood: the game loop, collision detection, and state management — and grew into a small, polished, installable web game. The name nods to both the snake *nibbling* apples and the **nibble** (4 bits, half a byte), which felt fitting for a project about learning to build games in code.
-
-> _Screenshots coming soon._
-> <!-- ![Nibble — classic mode](docs/screenshot-classic.png) -->
 
 ## ✨ Features
 
@@ -26,7 +31,7 @@ Nibble is a from-scratch take on the game everyone played on their Nokia 3310. I
 - **Challenge modifiers** — composable difficulty flags rather than separate game modes: 2× speed, walls-that-kill vs. wrap-around edges, and obstacle mazes. Mix and match.
 - **Themes & skins** — from the authentic monochrome pixel look to colorful and cartoon styles. Swap them freely.
 - **Coins & shop** — earn coins as you play and spend them to unlock cosmetic themes and snake skins. Cosmetic only — no pay-to-win.
-- **Leaderboard** — local-first, with a global board on the roadmap.
+- **Leaderboard** — local-first, with an optional global board backed by Supabase.
 - **Installable PWA** — add it to your home screen or desktop and play fully offline.
 
 ## 🧱 Tech stack
@@ -57,11 +62,13 @@ See [`CLAUDE.md`](./CLAUDE.md) for the full conventions and invariants.
 
 ## 🚀 Getting started
 
-**Prerequisites:** Node.js 20+ and npm.
+**Just want to play?** No setup needed — the game is live at **[nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/)**.
+
+To work on it locally — **prerequisites:** Node.js 20+ and npm.
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/nibble.git
+git clone https://github.com/nunoamorim99/nibble.git
 cd nibble
 
 # 2. Install
@@ -101,13 +108,17 @@ nibble/
 
 ## 📲 Install it as an app
 
-Nibble is a PWA, so you can install it and play offline:
+Nibble is a PWA — open **[the live game](https://nunoamorim99.github.io/nibble/)**, install it, and play offline:
 
 - **Desktop (Chrome / Edge):** open the site, then click the **install icon** in the address bar (or menu → _Install Nibble_).
 - **Android:** menu → _Add to Home screen_.
 - **iOS (Safari):** Share → _Add to Home Screen_.
 
 Once installed it launches in its own window and works without a connection.
+
+## 🌐 Deployment
+
+Every push to `main` runs the tests, builds, and deploys to **GitHub Pages** at [nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/) via [`deploy-pages.yml`](./.github/workflows/deploy-pages.yml). The optional global leaderboard is switched on at build time by two repository Actions settings — a `VITE_LEADERBOARD_URL` variable and a `VITE_LEADERBOARD_ANON_KEY` secret (see [`docs/REMOTE_LEADERBOARD.md`](./docs/REMOTE_LEADERBOARD.md)); without them the build simply stays local-only.
 
 ## 🗺️ Roadmap
 
@@ -118,6 +129,8 @@ Development runs in phases, each with a clear definition of done. Full detail li
 - **Phase 5–6** — Level mode + challenges, more content & polish
 - **Phase 7** — Optional global leaderboard
 - **Phase 8** — Native app via Capacitor (reusing the web code)
+
+Phases 0–7 are done and live in the [deployed build](https://nunoamorim99.github.io/nibble/); Phase 8 is up next.
 
 ## 🤖 Built with Claude Code
 
