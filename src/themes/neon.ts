@@ -7,6 +7,7 @@
  * cyan/magenta/white to match the neon accent palette.
  */
 import type { Theme } from './types'
+import { assetUrl } from './assetUrl'
 
 /** Near-black dark-sci-fi fallback background (used while the scene loads/fails). */
 const BACKGROUND = '#05070d'
@@ -29,7 +30,7 @@ export const neonTheme: Theme = {
   name: 'Neon',
   colors: {
     background: BACKGROUND,
-    backgroundImage: '/assets/backgrounds/neon/bg.png',
+    backgroundImage: assetUrl('assets/backgrounds/neon/bg.png'),
     grid: GRID_LINE,
     snakeHead: HEAD_CYAN,
     snakeBody: BODY_CYAN,
@@ -47,8 +48,8 @@ export const neonTheme: Theme = {
   },
   interpolate: true,
   sprites: {
-    sheetUrl: '/assets/sprites/neon/sheet.png',
-    mapUrl: '/assets/sprites/neon/sheet.json',
+    sheetUrl: assetUrl('assets/sprites/neon/sheet.png'),
+    mapUrl: assetUrl('assets/sprites/neon/sheet.json'),
   },
   particles: {
     eat: ['#4ae3ff', '#ff4fd8', '#ffffff'],

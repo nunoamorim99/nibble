@@ -9,6 +9,7 @@
  * sprite sliding smoothly between cells would blur the illusion of scales.
  */
 import type { Theme } from './types'
+import { assetUrl } from './assetUrl'
 
 /** Deep, slightly warm near-black board background. */
 const BACKGROUND = '#1a1712'
@@ -54,8 +55,8 @@ export const detailedPixelTheme: Theme = {
   },
   interpolate: false,
   sprites: {
-    sheetUrl: '/assets/sprites/detailed-pixel/sheet.png',
-    mapUrl: '/assets/sprites/detailed-pixel/sheet.json',
+    sheetUrl: assetUrl('assets/sprites/detailed-pixel/sheet.png'),
+    mapUrl: assetUrl('assets/sprites/detailed-pixel/sheet.json'),
     pixelated: true,
   },
 }

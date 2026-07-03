@@ -6,6 +6,7 @@
  * red/yellow eat-particle burst matches the food's own palette.
  */
 import type { Theme } from './types'
+import { assetUrl } from './assetUrl'
 
 /** Warm, sunny fallback background tone (used while the scene loads/fails). */
 const BACKGROUND = '#fde8b6'
@@ -32,7 +33,7 @@ export const cartoonTheme: Theme = {
   name: 'Cartoon',
   colors: {
     background: BACKGROUND,
-    backgroundImage: '/assets/backgrounds/cartoon/bg.png',
+    backgroundImage: assetUrl('assets/backgrounds/cartoon/bg.png'),
     grid: null,
     snakeHead: HEAD_GREEN,
     snakeBody: BODY_GREEN,
@@ -50,8 +51,8 @@ export const cartoonTheme: Theme = {
   },
   interpolate: true,
   sprites: {
-    sheetUrl: '/assets/sprites/cartoon/sheet.png',
-    mapUrl: '/assets/sprites/cartoon/sheet.json',
+    sheetUrl: assetUrl('assets/sprites/cartoon/sheet.png'),
+    mapUrl: assetUrl('assets/sprites/cartoon/sheet.json'),
   },
   particles: {
     eat: ['#e8543f', '#f4a53a', '#ffd34d', '#f26b4d'],

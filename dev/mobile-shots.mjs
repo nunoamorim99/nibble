@@ -10,7 +10,7 @@ import puppeteer from 'puppeteer-core'
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const OUT = process.argv[2] ?? '.'
-const URL = process.argv[3] ?? 'http://localhost:4323/'
+const URL = process.argv[3] ?? 'http://localhost:4323/nibble/'
 
 const VIEWPORTS = [
   { name: 'portrait-390', width: 390, height: 844 },
