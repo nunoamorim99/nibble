@@ -16,6 +16,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "puppeteer-core": "^25.3.0",
     "sharp": "^0.35.3",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",

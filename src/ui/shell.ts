@@ -855,11 +855,19 @@ function injectStyles(): void {
       width: 100%;
       max-width: 100vmin;
     }
+    /* Overlay/menu layers escape #ui-root's max-width via position: fixed,
+       so #ui-root's own width constraint above only really governs the
+       normal-flow control bar; index.html's #ui-root max-width rule (keyed
+       to the same --nibble-stage-size as the canvas) is what actually caps
+       the bar on mobile. */
     .nibble-bar {
       display: flex;
+      flex-wrap: wrap;
       gap: 0.5rem;
       justify-content: center;
-      padding: 0.5rem 0;
+      align-items: center;
+      padding: 0.5rem 0.25rem;
+      row-gap: 0.4rem;
     }
     .nibble-btn {
       background: #1a1c16;
@@ -872,6 +880,9 @@ function injectStyles(): void {
       letter-spacing: 0.05em;
       text-transform: uppercase;
       cursor: pointer;
+      min-height: 44px;
+      box-sizing: border-box;
+      touch-action: manipulation;
     }
     .nibble-btn:hover,
     .nibble-btn:focus-visible {
@@ -897,6 +908,9 @@ function injectStyles(): void {
       font-size: 0.85rem;
       letter-spacing: 0.05em;
       user-select: none;
+      min-height: 44px;
+      box-sizing: border-box;
+      white-space: nowrap;
     }
     .nibble-level-info {
       display: inline-flex;
@@ -907,6 +921,25 @@ function injectStyles(): void {
       letter-spacing: 0.05em;
       text-transform: uppercase;
       user-select: none;
+      min-height: 44px;
+      box-sizing: border-box;
+      white-space: nowrap;
+    }
+    /* --- narrow-phone tightening (bar must never horizontally scroll) --- */
+    @media (max-width: 480px) {
+      .nibble-bar {
+        gap: 0.35rem;
+        padding: 0.4rem 0.15rem;
+      }
+      .nibble-btn {
+        padding: 0.35rem 0.55rem;
+        font-size: 0.75rem;
+      }
+      .nibble-coin-counter,
+      .nibble-level-info {
+        padding: 0.35rem 0.5rem;
+        font-size: 0.75rem;
+      }
     }
     /* --- main menu screen ------------------------------------------- */
     .nibble-menu {
@@ -925,7 +958,9 @@ function injectStyles(): void {
         var(--nibble-menu-backdrop, none);
       background-size: cover;
       background-position: center;
-      padding: 2rem 1rem;
+      padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+        max(2rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+      box-sizing: border-box;
     }
     .nibble-menu-column {
       display: flex;
@@ -934,6 +969,22 @@ function injectStyles(): void {
       gap: 0.5rem;
       width: 100%;
       max-width: 22rem;
+      /* Belt-and-braces for the centered-flex-with-overflow quirk in some
+         engines (content can otherwise clip at the top when it overflows a
+         vertically-centered flex parent): a shrink-safe margin keeps the
+         column from ever being pinned flush under the viewport top edge. */
+      margin: auto 0;
+    }
+    /* Short viewports (landscape phones): let the menu column pack from the
+       top instead of centering, so scrolling reaches all content predictably
+       and nothing hides above the fold. */
+    @media (max-height: 480px) {
+      .nibble-menu {
+        align-items: flex-start;
+      }
+      .nibble-menu-column {
+        margin: 0.5rem 0;
+      }
     }
     .nibble-menu-logo {
       width: 96px;
@@ -980,6 +1031,9 @@ function injectStyles(): void {
       text-transform: uppercase;
       text-align: center;
       cursor: pointer;
+      min-height: 48px;
+      box-sizing: border-box;
+      touch-action: manipulation;
     }
     .nibble-menu-btn:hover,
     .nibble-menu-btn:focus-visible {
@@ -1013,6 +1067,12 @@ function injectStyles(): void {
       text-underline-offset: 3px;
       opacity: 0.75;
       cursor: pointer;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      touch-action: manipulation;
     }
     .nibble-menu-resume:hover,
     .nibble-menu-resume:focus-visible {
@@ -1031,6 +1091,10 @@ function injectStyles(): void {
       align-items: center;
       justify-content: center;
       z-index: 10;
+      overflow-y: auto;
+      padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+        max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+      box-sizing: border-box;
     }
     .nibble-panel {
       background: #1a1c16;
@@ -1038,10 +1102,27 @@ function injectStyles(): void {
       border-radius: 4px;
       padding: 1.25rem;
       min-width: 240px;
-      max-width: 90vmin;
+      width: 100%;
+      max-width: min(92vw, 420px);
+      max-height: 85vh;
+      max-height: 85dvh;
+      overflow-y: auto;
+      box-sizing: border-box;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+      margin: auto;
+    }
+    /* Short viewports (landscape phones): same reasoning as .nibble-menu —
+       pack from the top so an overflowing panel scrolls predictably instead
+       of relying on centered-flex-with-overflow behavior. */
+    @media (max-height: 480px) {
+      .nibble-overlay {
+        align-items: flex-start;
+      }
+      .nibble-panel {
+        margin: 0.5rem auto;
+      }
     }
     .nibble-panel-title {
       margin: 0;
@@ -1100,6 +1181,9 @@ function injectStyles(): void {
       letter-spacing: 0.05em;
       text-align: left;
       cursor: pointer;
+      min-height: 44px;
+      box-sizing: border-box;
+      touch-action: manipulation;
     }
     .nibble-theme-btn:hover,
     .nibble-theme-btn:focus-visible {
@@ -1189,12 +1273,18 @@ function injectStyles(): void {
       border: 1px solid #c4cfa1;
       border-radius: 2px;
       font: inherit;
+      /* Must stay >= 16px: iOS Safari auto-zooms the whole page on focusing
+         any text input with a computed font-size below 16px. 1.5rem (24px
+         at the default root size) clears that floor; the narrow-phone media
+         query below must never shrink this rule. */
       font-size: 1.5rem;
       letter-spacing: 0.3em;
       text-align: center;
       text-transform: uppercase;
       width: 5ch;
       padding: 0.25rem;
+      min-height: 44px;
+      box-sizing: border-box;
     }
     .nibble-dialog-actions {
       display: flex;

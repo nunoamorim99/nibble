@@ -2,39 +2,122 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Nibble</title>
     <meta name="description" content="Nokia-style Snake for the web — installable PWA." />
     <meta name="theme-color" content="#c4cfa1" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <style>
+      /*
+       * Layout contract: the canvas (always square) and the control bar below
+       * it must both fit inside the visible viewport at once, in portrait AND
+       * landscape, with zero page scroll and zero horizontal overflow.
+       *
+       * Strategy:
+       *  - `--nibble-bar-allowance` is a generous CSS-var estimate of the
+       *    vertical space the bar (+ safe-area padding) needs below the
+       *    canvas. It's sized for the *wrapped two-row* bar case (narrow
+       *    phones), so single-row desktop/tablet bars have headroom to
+       *    spare — never a squeeze.
+       *  - The canvas's CSS width is `min(available-width, available-height)`
+       *    so it is capped by BOTH axes; `aspect-ratio: 1/1` makes height
+       *    follow width, guaranteeing a square that never forces scroll.
+       *  - `100dvh` (dynamic viewport height) is used so mobile browser
+       *    chrome (address bar showing/hiding) never pushes the bar
+       *    off-screen; a `100vh`-based value is declared first as a fallback
+       *    for browsers without `dvh` support, with the `dvh`-based value
+       *    declared second so it overrides where supported (see the
+       *    --nibble-stage-size-vh/-dvh comment below for why that split
+       *    exists instead of one min() mixing both units).
+       *  - `env(safe-area-inset-*)` padding on #app respects notches/home
+       *    indicators; the same insets are subtracted from the canvas's
+       *    available width/height so the square never runs under a notch.
+       */
+      :root {
+        --nibble-bar-allowance: 6.5rem;
+        /* Single source of truth for the square's side length: capped by
+           available width AND by available height minus the bar allowance.
+           canvas and #ui-root both read these vars so they always agree.
+           Split into a vh-only var and a dvh-only var (each using a single
+           viewport unit, so each is unambiguously valid on any engine) —
+           mixing vh/dvh inside one min() risks the WHOLE expression being
+           treated as invalid the moment it's substituted into a real
+           property on engines that don't recognize dvh. Each var is then
+           applied via its own full width/max-width declaration below (vh
+           one first as the fallback, dvh one second so it overrides where
+           supported); an unsupported unit only invalidates that single
+           declaration, correctly leaving the prior one in effect. */
+        --nibble-stage-size-vh: min(
+          100vw - env(safe-area-inset-left) - env(safe-area-inset-right),
+          100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--nibble-bar-allowance)
+        );
+        --nibble-stage-size-dvh: min(
+          100vw - env(safe-area-inset-left) - env(safe-area-inset-right),
+          100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--nibble-bar-allowance)
+        );
+      }
+      @media (max-width: 480px) {
+        :root {
+          --nibble-bar-allowance: 7.5rem;
+        }
+      }
       html,
       body {
         height: 100%;
         margin: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+        background: #1a1c16;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        height: 100vh;
+        height: 100dvh;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: #1a1c16;
       }
       #app {
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 0;
         width: 100%;
-        max-width: 100vmin;
+        height: 100vh;
+        height: 100dvh;
+        justify-content: center;
+        overflow: hidden;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+        touch-action: manipulation;
       }
       canvas {
         image-rendering: pixelated;
         touch-action: none;
         display: block;
-        width: 100%;
-        max-width: 100vmin;
-        max-height: 100vmin;
+        width: var(--nibble-stage-size-vh);
+        width: var(--nibble-stage-size-dvh);
         aspect-ratio: 1 / 1;
+        flex-shrink: 0;
+      }
+      #ui-root {
+        touch-action: manipulation;
+        user-select: none;
+        -webkit-user-select: none;
+        max-width: var(--nibble-stage-size-vh);
+        max-width: var(--nibble-stage-size-dvh);
+      }
+      /* The initials input is the one control the user actually types into —
+         never suppress text selection/editing affordances there. */
+      #ui-root input {
+        user-select: text;
+        -webkit-user-select: text;
+        touch-action: manipulation;
       }
     </style>
   </head>

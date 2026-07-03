@@ -245,6 +245,17 @@ _Status: pending — no manifest, service worker, or offline caching yet._
 - [ ] App updates (new service worker) prompt the user or apply cleanly without data loss
 - [ ] Cold start time (installed, offline) is acceptable
 
+### Mobile layout & touch (real device)
+
+_Layout verified in emulation (portrait 390×844, landscape 844×390, narrow 360×740 — no overflow, canvas+bar always fit: see dev/mobile-shots.mjs); these need a real phone._
+
+- [ ] Portrait: board + bar fully visible with no page scrolling; nothing hides behind browser chrome or the home-indicator area (safe-area padding works on a notched device)
+- [ ] Landscape: board shrinks to fit beside/above the bar; menu and panels scroll from the top instead of clipping
+- [ ] Swipes steer reliably during play and never trigger pull-to-refresh or page scroll
+- [ ] All bar/menu buttons are comfortably tappable one-handed (≥44px targets); no double-tap zoom delay
+- [ ] Focusing the initials input does NOT zoom the page (iOS ≥16px font rule)
+- [ ] Rotating the device mid-game keeps the board square and playable
+
 ## 5. Sound & accessibility
 
 _Status: Phase 6 (Content + juice) has landed — WebAudio sound
