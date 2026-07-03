@@ -12,7 +12,7 @@
 
 <br>
 
-[![Nibble — a stylized green snake rearing over a red apple on a glowing arcade grid](assets/readme/cover.jpg)](https://nunoamorim99.github.io/nibble/)
+[![Nibble — a stylized green snake gliding across a glowing arcade grid toward a red apple](assets/readme/cover.png)](https://nunoamorim99.github.io/nibble/)
 
 ### [▶️ Play it now — nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/)
 
@@ -152,10 +152,6 @@ Run `/agents` inside Claude Code to see and manage them. A typical flow: kick of
 ## 🎨 Art
 
 Themes follow an "evolution of Snake" ladder — from the faithful monochrome original up through colored pixel, detailed, cartoon, and futuristic looks (see [`docs/THEMES.md`](./docs/THEMES.md)). The classic and early themes are drawn entirely in code, with no image assets. Snake skins and food sprites for the richer themes are **code-generated spritesheets** (TypeScript + `sharp`, with SVG as the source for detailed art), so the pipeline is fully automatable end to end. **Higgsfield** is used only for scenic **backgrounds** on the illustrated themes — never for the snake itself, since consistent creature sets are exactly where image models fall down. All unlockables are purely cosmetic.
-
-## 🤝 Contributing
-
-This is primarily a personal learning project, but issues and suggestions are welcome. If you open a PR, please keep the architecture boundaries intact (see `CLAUDE.md`) and add unit tests for any engine changes.
 
 ## 📄 License
 

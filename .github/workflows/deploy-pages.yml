@@ -10,9 +10,11 @@ permissions:
   pages: write
   id-token: write
 
+# Queue Pages deployments instead of cancelling in-flight ones — a deploy
+# killed mid-flight can leave a stuck deployment that fails the next run.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
