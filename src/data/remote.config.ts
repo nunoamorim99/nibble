@@ -24,23 +24,54 @@ export interface RemoteLeaderboardConfig {
   readonly table: string
 }
 
-const DEFAULT_TABLE = 'scores'
+export const DEFAULT_TABLE = 'scores'
+
+/** Just the env vars this module reads, so the resolver is testable without
+ * touching Vite's real `import.meta.env`. */
+export interface LeaderboardEnv {
+  readonly VITE_LEADERBOARD_URL?: string
+  readonly VITE_LEADERBOARD_ANON_KEY?: string
+  readonly VITE_LEADERBOARD_TABLE?: string
+}
 
 /**
- * Read config from Vite-injected env vars (`VITE_LEADERBOARD_URL`,
- * `VITE_LEADERBOARD_ANON_KEY`, `VITE_LEADERBOARD_TABLE`). Every access is
- * optional-chained with a nullish fallback, so an environment where none of
- * these are defined (the default, and every environment today) resolves to
- * a fully-disabled config rather than throwing.
+ * Normalize a build-time env var to a trimmed string, treating "absent" and
+ * "present but blank" identically.
+ *
+ * This matters because of how the values arrive. In CI (see
+ * `.github/workflows/deploy-pages.yml`) these come from GitHub Actions
+ * `vars`/`secrets`; an *unset* Actions variable expands to an EMPTY STRING,
+ * not `undefined`. Vite then statically inlines that `''` into the bundle.
+ * So a plain `?? DEFAULT` guard is not enough — `'' ?? 'scores'` is `''`,
+ * because `??` only substitutes on `null`/`undefined`. Trimming to `''` here
+ * lets `resolveConfig` apply real defaults / disable cleanly regardless of
+ * whether the var was unset or set-but-blank.
+ */
+function readEnv(value: string | undefined): string {
+  return (value ?? '').trim()
+}
+
+/**
+ * Pure config resolver over a plain env object. Extracted from `readConfig`
+ * so the empty-string / whitespace / defaulting behavior can be unit-tested
+ * directly (see `tests/data/remote.config.test.ts`) without a real build.
+ *
+ * `table` falls back to `DEFAULT_TABLE` when blank — an empty table name
+ * would otherwise produce requests to `/rest/v1/?...` (no table), which
+ * Supabase rejects with 401 and which silently degrades the whole feature to
+ * local-only. That exact misconfiguration shipped once (the CI `vars`
+ * variable for the table was unset → inlined as `''`), so this is a
+ * regression guard, not a hypothetical. See `readEnv` for why the previous
+ * `?? DEFAULT_TABLE` did not catch it.
  *
  * Enabled only when BOTH the URL and anon key are present and non-empty —
  * a partially-configured deployment stays disabled (and thus safely local)
  * rather than attempting half-formed requests.
  */
-function readConfig(): RemoteLeaderboardConfig {
-  const url = import.meta.env?.VITE_LEADERBOARD_URL ?? ''
-  const anonKey = import.meta.env?.VITE_LEADERBOARD_ANON_KEY ?? ''
-  const table = import.meta.env?.VITE_LEADERBOARD_TABLE ?? DEFAULT_TABLE
+export function resolveConfig(env: LeaderboardEnv): RemoteLeaderboardConfig {
+  const url = readEnv(env.VITE_LEADERBOARD_URL)
+  const anonKey = readEnv(env.VITE_LEADERBOARD_ANON_KEY)
+  const table = readEnv(env.VITE_LEADERBOARD_TABLE) || DEFAULT_TABLE
 
   return {
     enabled: Boolean(url) && Boolean(anonKey),
@@ -50,5 +81,11 @@ function readConfig(): RemoteLeaderboardConfig {
   }
 }
 
-/** The active remote-leaderboard config, resolved once at module load. */
-export const REMOTE_LEADERBOARD: RemoteLeaderboardConfig = readConfig()
+/**
+ * Read config from Vite-injected env vars, resolved once at module load.
+ * All the interesting logic lives in `resolveConfig`; this just feeds it the
+ * real `import.meta.env` (guarded for non-Vite contexts like tests).
+ */
+export const REMOTE_LEADERBOARD: RemoteLeaderboardConfig = resolveConfig(
+  (import.meta.env ?? {}) as LeaderboardEnv,
+)
