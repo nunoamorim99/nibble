@@ -27,7 +27,13 @@ import { createRemoteLeaderboardAdapter } from './remote'
 import { REMOTE_LEADERBOARD } from './remote.config'
 import type { PersistenceAdapter } from './adapter'
 
-export type { LeaderboardEntry, PersistenceAdapter } from './adapter'
+export type {
+  LeaderboardEntry,
+  LeaderboardPage,
+  LeaderboardPageOptions,
+  LeaderboardSource,
+  PersistenceAdapter,
+} from './adapter'
 export { createLocalAdapter } from './local'
 export { createMemoryAdapter } from './memory'
 

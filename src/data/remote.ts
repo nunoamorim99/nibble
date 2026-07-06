@@ -30,10 +30,15 @@
  * No engine/render/ui imports — adapter contract + this file's own request
  * shaping only.
  */
-import type { LeaderboardEntry, PersistenceAdapter } from './adapter'
+import type {
+  LeaderboardEntry,
+  LeaderboardPage,
+  PersistenceAdapter,
+} from './adapter'
 import type { RemoteLeaderboardConfig } from './remote.config'
 
 const DEFAULT_LEADERBOARD_LIMIT = 10
+const DEFAULT_PAGE_LIMIT = 25
 
 /** PostgREST row shape for the `scores` table (snake_case, per SQL schema). */
 interface RemoteScoreRow {
@@ -74,6 +79,7 @@ function leaderboardUrl(
   config: RemoteLeaderboardConfig,
   modeId: string,
   limit: number,
+  offset = 0,
 ): string {
   const params = new URLSearchParams({
     mode_id: `eq.${modeId}`,
@@ -81,6 +87,9 @@ function leaderboardUrl(
     order: 'score.desc',
     limit: String(limit),
   })
+  // PostgREST paginates with offset+limit; omit offset=0 to keep the
+  // top-N (non-paged) URL byte-identical to before.
+  if (offset > 0) params.set('offset', String(offset))
   return `${config.url}/rest/v1/${config.table}?${params.toString()}`
 }
 
@@ -131,6 +140,41 @@ export function createRemoteLeaderboardAdapter(
     }
   }
 
+  async function remoteGetLeaderboardPage(
+    modeId: string,
+    limit: number,
+    offset: number,
+  ): Promise<LeaderboardPage> {
+    try {
+      const response = await fetchImpl(
+        leaderboardUrl(config, modeId, limit, offset),
+        { method: 'GET', headers: restHeaders(config) },
+      )
+      if (!response.ok) {
+        throw new Error(`remote leaderboard GET failed: ${response.status}`)
+      }
+      const rows = (await response.json()) as readonly RemoteScoreRow[]
+      // No exact server count here (that would need `Prefer: count=…`), so
+      // infer "more pages exist" from a full page coming back.
+      return {
+        entries: rows.map(rowToEntry),
+        source: 'remote',
+        hasMore: rows.length >= limit,
+      }
+    } catch (error) {
+      if (!warnedGetFailure) {
+        warnedGetFailure = true
+        console.warn(
+          '[data] remote leaderboard fetch failed; falling back to local leaderboard',
+          error,
+        )
+      }
+      // Fall back to the local page — its own `source: 'local'` is what the
+      // UI surfaces as "showing local scores".
+      return local.getLeaderboardPage(modeId, { limit, offset })
+    }
+  }
+
   async function remoteSubmitScore(entry: LeaderboardEntry): Promise<void> {
     try {
       const response = await fetchImpl(submitUrl(config), {
@@ -172,6 +216,16 @@ export function createRemoteLeaderboardAdapter(
     async getLeaderboard(modeId, limit = DEFAULT_LEADERBOARD_LIMIT) {
       if (!config.enabled) return local.getLeaderboard(modeId, limit)
       return remoteGetLeaderboard(modeId, limit)
+    },
+
+    async getLeaderboardPage(modeId, options = {}) {
+      const limit = options.limit ?? DEFAULT_PAGE_LIMIT
+      const offset = options.offset ?? 0
+      // Disabled → pure local page (source: 'local'); the UI shows the
+      // "local scores" notice only when a remote was expected but failed,
+      // which is the enabled path below.
+      if (!config.enabled) return local.getLeaderboardPage(modeId, { limit, offset })
+      return remoteGetLeaderboardPage(modeId, limit, offset)
     },
 
     async submitScore(entry) {
