@@ -2,7 +2,7 @@
 
 # 🐍 Nibble
 
-**The Nokia snake, reborn as an installable web game** — classic mode, level challenges, unlockable themes and skins, and a leaderboard.
+**The Nokia snake, reborn as an installable web game** — classic mode, level challenges, unlockable themes and skins, a global leaderboard, and cross-device progress.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
@@ -31,7 +31,8 @@ Nibble is a from-scratch take on the game everyone played on their Nokia 3310. I
 - **Challenge modifiers** — composable difficulty flags rather than separate game modes: 2× speed, walls-that-kill vs. wrap-around edges, and obstacle mazes. Mix and match.
 - **Themes & skins** — from the authentic monochrome pixel look to colorful and cartoon styles. Swap them freely.
 - **Coins & shop** — earn coins as you play and spend them to unlock cosmetic themes and snake skins. Cosmetic only — no pay-to-win.
-- **Leaderboard** — local-first, with an optional global board backed by Supabase.
+- **Global leaderboard** — a shared, Supabase-backed board every player reads and writes to, on its own full-screen page with infinite scroll. Local-first: if the network is unreachable it falls back to on-device scores and says so, so it never silently shows the wrong data.
+- **Cross-device progress** — an optional, no-login account keyed by a secret recovery code (e.g. `NIBBLE-7Q2K-9F4M`). Your coins, unlocks, and scores follow you to a new device — enter the code to restore. Player data lives behind a Supabase Edge Function, never reachable directly by the client.
 - **Installable PWA** — add it to your home screen or desktop and play fully offline.
 
 ## 🧱 Tech stack
@@ -43,6 +44,7 @@ Nibble is a from-scratch take on the game everyone played on their Nokia 3310. I
 | Installable app | `vite-plugin-pwa` (Workbox) |
 | Rendering | HTML5 Canvas (2D) |
 | Persistence | IndexedDB (behind a thin adapter) |
+| Online backend (optional) | Supabase — PostgREST for the leaderboard, an Edge Function for accounts |
 | Tests | Vitest |
 | Theme art (later) | Higgsfield (the classic theme is drawn in code) |
 
@@ -100,8 +102,8 @@ nibble/
 │  ├─ render/             # canvas rendering
 │  ├─ themes/             # theme data + registry
 │  ├─ levels/             # level/challenge config
-│  ├─ data/               # persistence + economy
-│  └─ ui/                 # menus, shop, leaderboard, settings
+│  ├─ data/               # persistence, economy, leaderboard + account sync
+│  └─ ui/                 # menus, shop, leaderboard, profile, settings
 ├─ assets/sprites/        # generated theme art
 └─ tests/                 # unit tests + playtest checklist
 ```
@@ -118,7 +120,12 @@ Once installed it launches in its own window and works without a connection.
 
 ## 🌐 Deployment
 
-Every push to `main` runs the tests, builds, and deploys to **GitHub Pages** at [nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/) via [`deploy-pages.yml`](./.github/workflows/deploy-pages.yml). The optional global leaderboard is switched on at build time by two repository Actions settings — a `VITE_LEADERBOARD_URL` variable and a `VITE_LEADERBOARD_ANON_KEY` secret (see [`docs/REMOTE_LEADERBOARD.md`](./docs/REMOTE_LEADERBOARD.md)); without them the build simply stays local-only.
+Every push to `main` runs the tests, builds, and deploys to **GitHub Pages** at [nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/) via [`deploy-pages.yml`](./.github/workflows/deploy-pages.yml).
+
+Two optional backends are switched on at build time by repository Actions settings, and each stays fully local/offline when its variables are absent:
+
+- **Global leaderboard** — a `VITE_LEADERBOARD_URL` variable and a `VITE_LEADERBOARD_ANON_KEY` secret. See [`docs/REMOTE_LEADERBOARD.md`](./docs/REMOTE_LEADERBOARD.md).
+- **Cross-device accounts** — a `VITE_PLAYER_API_URL` variable (the Supabase Edge Function URL; it reuses the leaderboard anon key). Server setup — tables, RLS, the Edge Function, and the required grants — is in [`docs/PLAYER_ACCOUNTS.md`](./docs/PLAYER_ACCOUNTS.md).
 
 ## 🗺️ Roadmap
 
@@ -127,7 +134,7 @@ Development runs in phases, each with a clear definition of done. Full detail li
 - **Phase 0–2** — Foundations, classic MVP, polish + PWA + local leaderboard
 - **Phase 3–4** — Theme system, coins & shop
 - **Phase 5–6** — Level mode + challenges, more content & polish
-- **Phase 7** — Optional global leaderboard
+- **Phase 7** — Online services: global leaderboard (dedicated page, infinite scroll) and cross-device accounts via recovery code
 - **Phase 8** — Native app via Capacitor (reusing the web code)
 
 Phases 0–7 are done and live in the [deployed build](https://nunoamorim99.github.io/nibble/); Phase 8 is up next.
