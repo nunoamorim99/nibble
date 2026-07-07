@@ -27,7 +27,7 @@ Run this in the Supabase SQL editor (Project → SQL Editor → New query):
 create table if not exists public.scores (
   id           bigint generated always as identity primary key,
   mode_id      text not null,
-  name         text not null check (char_length(name) <= 3),
+  name         text not null check (char_length(name) between 1 and 12),
   score        integer not null check (score >= 0 and score <= 100000),
   achieved_at  timestamptz not null default now()
 );
@@ -41,10 +41,35 @@ Notes on the shape, matching `LeaderboardEntry` in `src/data/adapter.ts`:
 - `mode_id` / `name` / `score` / `achieved_at` are the snake_case wire form;
   `src/data/remote.ts` converts to/from the camelCase `LeaderboardEntry` the
   rest of the app uses (`modeId`, `name`, `score`, `achievedAt`).
-- `name` is capped at 3 characters to match classic arcade-initials UI. Adjust
-  the `check` (and any UI input limit) together if that changes.
+- `name` is capped at 12 characters, matching `MAX_NAME_LENGTH` in
+  `src/ui/shell.ts`. **These two must move together** — if the client cap is
+  raised past what this `check` allows, a longer name POSTs successfully to
+  `local` but is rejected server-side (row-shape violation), and the remote
+  submit silently falls back to a local-only save (see the fallback note in
+  `src/data/remote.ts`). The client trims to `MAX_NAME_LENGTH` and substitutes
+  `'Player'` for an empty name, so `between 1 and 12` is always satisfiable.
 - `score` is bounded `[0, 100000]` as a sanity ceiling, not a real anti-cheat
   measure — see [Section 4](#4-what-this-cannot-stop) below.
+
+### Migrating an existing `scores` table (name length 3 → 12)
+
+If you already ran the older schema (which had `check (char_length(name) <=
+3)`), run this once to widen the name limit without recreating the table or
+losing rows:
+
+```sql
+alter table public.scores
+  drop constraint if exists scores_name_check;
+
+alter table public.scores
+  add constraint scores_name_check
+  check (char_length(name) between 1 and 12);
+```
+
+Postgres auto-names a column `check` constraint `<table>_<column>_check`, so
+the original constraint is `scores_name_check`; the `drop ... if exists` makes
+this safe to run even if it was named differently (it just becomes a no-op and
+the `add` still applies the new rule). Existing 3-char rows remain valid.
 
 ## 3. Enable Row Level Security (RLS) with anon policies
 

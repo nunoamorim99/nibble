@@ -250,3 +250,94 @@ describe('createRemoteLeaderboardAdapter — delegation', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
+
+describe('createRemoteLeaderboardAdapter — getLeaderboardPage', () => {
+  const rowsFor = (count: number, base = 0) =>
+    Array.from({ length: count }, (_, i) => ({
+      mode_id: 'classic',
+      name: `P${base + i}`,
+      score: 1000 - (base + i),
+      achieved_at: '2026-02-01T00:00:00.000Z',
+    }))
+
+  it('disabled config reads the local page and reports source: local without fetching', async () => {
+    const local = createMemoryAdapter()
+    await local.submitScore(SAMPLE_ENTRY)
+    const fetchImpl = vi.fn()
+
+    const adapter = createRemoteLeaderboardAdapter(local, DISABLED_CONFIG, fetchImpl)
+    const page = await adapter.getLeaderboardPage('classic')
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(page.source).toBe('local')
+    expect(page.entries).toEqual([SAMPLE_ENTRY])
+    expect(page.hasMore).toBe(false)
+  })
+
+  it('enabled: builds a URL with the offset param and reports source: remote', async () => {
+    const local = createMemoryAdapter()
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(rowsFor(25)))
+
+    const adapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, fetchImpl)
+    const page = await adapter.getLeaderboardPage('classic', { limit: 25, offset: 25 })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [url] = fetchImpl.mock.calls[0]!
+    expect(String(url)).toContain(`${ENABLED_CONFIG.url}/rest/v1/${ENABLED_CONFIG.table}`)
+    expect(String(url)).toContain('offset=25')
+    expect(String(url)).toContain('limit=25')
+    expect(String(url)).toContain('order=score.desc')
+    expect(page.source).toBe('remote')
+    expect(page.entries).toHaveLength(25)
+  })
+
+  it('offset=0 omits the offset param (keeps the first-page URL clean)', async () => {
+    const local = createMemoryAdapter()
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(rowsFor(5)))
+
+    const adapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, fetchImpl)
+    await adapter.getLeaderboardPage('classic', { limit: 25, offset: 0 })
+
+    const [url] = fetchImpl.mock.calls[0]!
+    expect(String(url)).not.toContain('offset=')
+  })
+
+  it('hasMore is true when a full page returns, false on a short page', async () => {
+    const local = createMemoryAdapter()
+    const full = vi.fn<typeof fetch>(async () => jsonResponse(rowsFor(25)))
+    const short = vi.fn<typeof fetch>(async () => jsonResponse(rowsFor(7)))
+
+    const fullAdapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, full)
+    expect((await fullAdapter.getLeaderboardPage('classic', { limit: 25 })).hasMore).toBe(true)
+
+    const shortAdapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, short)
+    expect((await shortAdapter.getLeaderboardPage('classic', { limit: 25 })).hasMore).toBe(false)
+  })
+
+  it('falls back to the local page (source: local) when the remote GET fails', async () => {
+    const local = createMemoryAdapter()
+    await local.submitScore(SAMPLE_ENTRY)
+    const fetchImpl = vi.fn(async () => jsonResponse([], { ok: false, status: 401 }))
+
+    const adapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, fetchImpl)
+    const page = await adapter.getLeaderboardPage('classic')
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(page.source).toBe('local')
+    expect(page.entries).toEqual([SAMPLE_ENTRY])
+  })
+
+  it('falls back to the local page (source: local) when fetch throws', async () => {
+    const local = createMemoryAdapter()
+    await local.submitScore(SAMPLE_ENTRY)
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network down')
+    })
+
+    const adapter = createRemoteLeaderboardAdapter(local, ENABLED_CONFIG, fetchImpl)
+    const page = await adapter.getLeaderboardPage('classic')
+
+    expect(page.source).toBe('local')
+    expect(page.entries).toEqual([SAMPLE_ENTRY])
+  })
+})

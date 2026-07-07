@@ -33,7 +33,11 @@
  *
  * No engine imports, no DOM beyond `indexedDB` itself, no UI.
  */
-import type { LeaderboardEntry, PersistenceAdapter } from './adapter'
+import type {
+  LeaderboardEntry,
+  LeaderboardPage,
+  PersistenceAdapter,
+} from './adapter'
 import { createMemoryAdapter } from './memory'
 
 const DB_NAME = 'nibble'
@@ -52,6 +56,7 @@ const highScoreKey = (modeId: string): string => `highscore:${modeId}`
 const settingKey = (key: string): string => `setting:${key}`
 
 const DEFAULT_LEADERBOARD_LIMIT = 10
+const DEFAULT_PAGE_LIMIT = 25
 
 /** Shape of a row in `leaderboard`; IndexedDB assigns `id` on insert. */
 interface StoredLeaderboardEntry extends LeaderboardEntry {
@@ -188,6 +193,32 @@ async function getLeaderboardFromDb(
     }))
 }
 
+async function getLeaderboardPageFromDb(
+  db: IDBDatabase,
+  modeId: string,
+  limit: number,
+  offset: number,
+): Promise<LeaderboardPage> {
+  const tx = db.transaction(LEADERBOARD_STORE, 'readonly')
+  const index = tx.objectStore(LEADERBOARD_STORE).index(LEADERBOARD_MODE_INDEX)
+  const matches = await requestToPromise<StoredLeaderboardEntry[]>(
+    index.getAll(modeId),
+  )
+  await transactionDone(tx)
+  // All rows for the mode are already in memory here, so sort once and slice
+  // the requested window; `hasMore` is exact rather than a heuristic.
+  const ranked = matches.sort((a, b) => b.score - a.score)
+  const entries = ranked
+    .slice(offset, offset + limit)
+    .map(({ modeId, name, score, achievedAt }) => ({
+      modeId,
+      name,
+      score,
+      achievedAt,
+    }))
+  return { entries, source: 'local', hasMore: offset + limit < ranked.length }
+}
+
 async function submitScoreToDb(
   db: IDBDatabase,
   entry: LeaderboardEntry,
@@ -298,6 +329,16 @@ export function createLocalAdapter(): PersistenceAdapter {
         return backend.adapter.getLeaderboard(modeId, limit)
       }
       return getLeaderboardFromDb(backend.db, modeId, limit)
+    },
+
+    async getLeaderboardPage(modeId, options = {}) {
+      const limit = options.limit ?? DEFAULT_PAGE_LIMIT
+      const offset = options.offset ?? 0
+      const backend = await resolveBackend()
+      if (backend.kind === 'memory') {
+        return backend.adapter.getLeaderboardPage(modeId, { limit, offset })
+      }
+      return getLeaderboardPageFromDb(backend.db, modeId, limit, offset)
     },
 
     async submitScore(entry) {
