@@ -24,8 +24,8 @@
  */
 import { createLocalAdapter } from './local'
 import { createRemoteLeaderboardAdapter } from './remote'
-import { REMOTE_LEADERBOARD } from './remote.config'
-import { PLAYER_ACCOUNTS } from './player.config'
+import { REMOTE_LEADERBOARD, type RemoteLeaderboardConfig } from './remote.config'
+import { PLAYER_ACCOUNTS, type PlayerAccountsConfig } from './player.config'
 import { createIdentity, type Identity } from './identity'
 import { createPlayerClient, createPlayerSyncAdapter, type PlayerClient } from './player-sync'
 import type { PersistenceAdapter } from './adapter'
@@ -115,11 +115,18 @@ export interface PlayerRuntime {
  * `createAdapter()` plus an idle identity and a null client — the app behaves
  * exactly as before the feature existed. This is the factory `main.ts` uses
  * instead of `createAdapter()`; `createAdapter()` stays for existing callers.
+ *
+ * `leaderboard`/`accounts` default to the module-load configs but are injectable
+ * so tests can pin enabled/disabled behavior without depending on ambient
+ * `import.meta.env` (which vitest populates from `.env`/`.env.local`).
  */
-export function createPlayerRuntime(): PlayerRuntime {
+export function createPlayerRuntime(
+  leaderboard: RemoteLeaderboardConfig = REMOTE_LEADERBOARD,
+  accounts: PlayerAccountsConfig = PLAYER_ACCOUNTS,
+): PlayerRuntime {
   const local = createLocalAdapter()
-  const withLeaderboard = REMOTE_LEADERBOARD.enabled
-    ? createRemoteLeaderboardAdapter(local, REMOTE_LEADERBOARD)
+  const withLeaderboard = leaderboard.enabled
+    ? createRemoteLeaderboardAdapter(local, leaderboard)
     : local
 
   // Identity is built over the leaderboard/local layer so its setSetting
@@ -127,14 +134,14 @@ export function createPlayerRuntime(): PlayerRuntime {
   // code through identity.code.
   const identity = createIdentity(withLeaderboard)
 
-  if (!PLAYER_ACCOUNTS.enabled) {
+  if (!accounts.enabled) {
     return { adapter: withLeaderboard, identity, playerClient: null, accountsEnabled: false }
   }
 
-  const playerClient = createPlayerClient(PLAYER_ACCOUNTS)
+  const playerClient = createPlayerClient(accounts)
   const adapter = createPlayerSyncAdapter(
     withLeaderboard,
-    PLAYER_ACCOUNTS,
+    accounts,
     identity.code,
     playerClient,
   )
