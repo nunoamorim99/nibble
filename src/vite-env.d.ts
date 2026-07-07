@@ -13,6 +13,11 @@ interface ImportMetaEnv {
   readonly VITE_LEADERBOARD_ANON_KEY?: string
   /** PostgREST table name for leaderboard rows. Defaults to `'scores'`. */
   readonly VITE_LEADERBOARD_TABLE?: string
+  /** Base URL of the Supabase Edge Function gatekeeper for player accounts /
+   * cross-device progress (e.g. `https://xyz.functions.supabase.co/player`).
+   * Absent → accounts disabled; see `src/data/player.config.ts`. Reuses
+   * `VITE_LEADERBOARD_ANON_KEY` (same Supabase project) as its API key. */
+  readonly VITE_PLAYER_API_URL?: string
 }
 
 interface ImportMeta {

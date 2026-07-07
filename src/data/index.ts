@@ -24,7 +24,10 @@
  */
 import { createLocalAdapter } from './local'
 import { createRemoteLeaderboardAdapter } from './remote'
-import { REMOTE_LEADERBOARD } from './remote.config'
+import { REMOTE_LEADERBOARD, type RemoteLeaderboardConfig } from './remote.config'
+import { PLAYER_ACCOUNTS, type PlayerAccountsConfig } from './player.config'
+import { createIdentity, type Identity } from './identity'
+import { createPlayerClient, createPlayerSyncAdapter, type PlayerClient } from './player-sync'
 import type { PersistenceAdapter } from './adapter'
 
 export type {
@@ -40,6 +43,25 @@ export { createMemoryAdapter } from './memory'
 export type { RemoteLeaderboardConfig } from './remote.config'
 export { REMOTE_LEADERBOARD } from './remote.config'
 export { createRemoteLeaderboardAdapter } from './remote'
+
+export type { PlayerAccountsConfig } from './player.config'
+export { PLAYER_ACCOUNTS } from './player.config'
+export type { Identity, Player, Progress } from './identity'
+export {
+  createIdentity,
+  generatePlayerCode,
+  normalizeCode,
+  reconcile,
+  CODE_PATTERN,
+} from './identity'
+export type {
+  PlayerClient,
+  PlayerAccount,
+  PlayerScore,
+  CreatedAccount,
+  SyncedProgress,
+} from './player-sync'
+export { createPlayerClient, createPlayerSyncAdapter } from './player-sync'
 
 export type { ShopItem } from './economy.config'
 export { ECONOMY, SHOP_CATALOG } from './economy.config'
@@ -65,4 +87,63 @@ export function createAdapter(): PersistenceAdapter {
   const local = createLocalAdapter()
   if (!REMOTE_LEADERBOARD.enabled) return local
   return createRemoteLeaderboardAdapter(local, REMOTE_LEADERBOARD)
+}
+
+/** Everything `main.ts` needs to run with (optional) player accounts. */
+export interface PlayerRuntime {
+  /** The composed adapter: local → (leaderboard if enabled) → (player-sync if
+   * enabled). Always a plain `PersistenceAdapter` to every caller. */
+  readonly adapter: PersistenceAdapter
+  /** Current-player holder (present regardless of enablement; just never gets
+   * a player set when accounts are disabled). */
+  readonly identity: Identity
+  /** The Edge Function client, or `null` when accounts are disabled. */
+  readonly playerClient: PlayerClient | null
+  /** Whether the account feature is configured (drives the welcome prompt and
+   * the PROFILE menu entry). */
+  readonly accountsEnabled: boolean
+}
+
+/**
+ * Compose the full runtime: local IndexedDB, wrapped by the leaderboard
+ * decorator when configured, then by the player-sync decorator when accounts
+ * are configured. `identity` is built over the composed adapter so its
+ * current-player state persists through the same storage; the sync decorator
+ * reads the code via `identity.code`.
+ *
+ * When accounts are disabled this returns an adapter identical to
+ * `createAdapter()` plus an idle identity and a null client — the app behaves
+ * exactly as before the feature existed. This is the factory `main.ts` uses
+ * instead of `createAdapter()`; `createAdapter()` stays for existing callers.
+ *
+ * `leaderboard`/`accounts` default to the module-load configs but are injectable
+ * so tests can pin enabled/disabled behavior without depending on ambient
+ * `import.meta.env` (which vitest populates from `.env`/`.env.local`).
+ */
+export function createPlayerRuntime(
+  leaderboard: RemoteLeaderboardConfig = REMOTE_LEADERBOARD,
+  accounts: PlayerAccountsConfig = PLAYER_ACCOUNTS,
+): PlayerRuntime {
+  const local = createLocalAdapter()
+  const withLeaderboard = leaderboard.enabled
+    ? createRemoteLeaderboardAdapter(local, leaderboard)
+    : local
+
+  // Identity is built over the leaderboard/local layer so its setSetting
+  // persists locally; the player-sync decorator wraps OUTSIDE it and reads the
+  // code through identity.code.
+  const identity = createIdentity(withLeaderboard)
+
+  if (!accounts.enabled) {
+    return { adapter: withLeaderboard, identity, playerClient: null, accountsEnabled: false }
+  }
+
+  const playerClient = createPlayerClient(accounts)
+  const adapter = createPlayerSyncAdapter(
+    withLeaderboard,
+    accounts,
+    identity.code,
+    playerClient,
+  )
+  return { adapter, identity, playerClient, accountsEnabled: true }
 }
