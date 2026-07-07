@@ -70,6 +70,23 @@ Do **not** add anon policies here. If you do, you reintroduce exactly the
 attack the Edge Function exists to prevent (any client rewriting any account's
 coins).
 
+### Grant the service_role table privileges
+
+RLS bypass by `service_role` still requires that role to actually hold table
+privileges. On some projects the default grants are not present, so the
+function's writes fail with `permission denied for table players` (SQLSTATE
+`42501`) even though it authenticates as `service_role`. Grant them explicitly:
+
+```sql
+grant all privileges on table public.players to service_role;
+grant all privileges on table public.player_scores to service_role;
+grant usage, select on all sequences in schema public to service_role;
+```
+
+The sequence grant covers the identity column on `player_scores.id` (inserts
+need it). This is safe: the tables stay locked to everyone else via RLS — only
+the function (holding the service_role key) can reach them.
+
 ## 3. The Edge Function (`player`)
 
 One function, dispatched by an `action` field in a JSON POST body. It holds the
@@ -122,9 +139,22 @@ rate-limiting yet (add it when abuse becomes a concern).
 Deploy it either way:
 - **Dashboard (no tooling):** Edge Functions → *Deploy a new function* (or
   *Create via editor*) → name it exactly `player` → paste the file's contents →
-  Deploy. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected
-  automatically; no secrets to set.
+  Deploy.
 - **CLI:** `supabase functions deploy player` from the repo root.
+
+**Set the `SERVICE_ROLE_KEY` secret.** Supabase injects `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` automatically, but on projects using the newer API
+key format the injected `SUPABASE_SERVICE_ROLE_KEY` is an `sb_secret_...` value
+that does **not** carry the RLS-bypassing `service_role` role — writes then fail
+with `permission denied for table players`. So the function reads a custom
+secret **`SERVICE_ROLE_KEY`** first. Set it to the legacy **service_role JWT**
+(a long token starting with `eyJ`, from *Project Settings → API → Project API
+keys → service_role*): Edge Functions → *Secrets* → add `SERVICE_ROLE_KEY`, then
+redeploy. Never put this key in the client or any `VITE_*` var.
+
+**Note on "Verify JWT with legacy secret":** leave it ON. The game sends the
+anon key in the `Authorization` header, which satisfies it; the function's own
+per-request validation is the real access control.
 
 The reference skeleton below is the same logic in a slightly shorter form, for
 illustration — prefer the committed file.
