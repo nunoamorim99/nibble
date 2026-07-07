@@ -18,10 +18,24 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const db = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-)
+// The RLS-bypassing key. We read a custom `SERVICE_ROLE_KEY` secret FIRST
+// because Supabase's auto-injected `SUPABASE_SERVICE_ROLE_KEY` may be a newer
+// `sb_secret_...` key that maps to a limited role and does NOT bypass RLS
+// (symptom: "permission denied for table players"). The value must be the
+// legacy `service_role` JWT (a long token starting with `eyJ`) from
+// Project Settings → API → Project API keys → service_role.
+const SERVICE_KEY =
+  Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
+// IMPORTANT: pin the Authorization header to the service_role key. Without
+// this, supabase-js forwards the INCOMING request's Authorization (the game's
+// anon key) to PostgREST, so queries run as the anon role and RLS denies them.
+// Setting it here — and disabling session persistence/refresh — guarantees
+// every query bypasses RLS as service_role regardless of what the caller sent.
+const db = createClient(Deno.env.get('SUPABASE_URL')!, SERVICE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${SERVICE_KEY}` } },
+})
 
 // CORS: the game is served from a different origin (GitHub Pages), so the
 // browser sends a preflight OPTIONS and requires these headers on every reply.
