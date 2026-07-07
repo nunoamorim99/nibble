@@ -97,6 +97,21 @@ export interface ShopItemView {
   readonly owned: boolean
 }
 
+/** Display-only account score row for the Profile page's "your scores" list. */
+export interface PlayerScoreView {
+  readonly modeId: string
+  readonly score: number
+}
+
+/**
+ * Result of an account create/restore attempt, reported back to the shell so
+ * its overlay can render success vs. an inline error WITHOUT the shell knowing
+ * anything about networking. `main.ts` owns the actual API calls.
+ */
+export type AccountActionResult =
+  | { readonly ok: true; readonly name: string }
+  | { readonly ok: false; readonly reason: 'not-found' | 'network' | 'invalid' }
+
 /**
  * Structurally identical to the engine's `Direction` — declared locally so
  * this layer stays decoupled from `src/engine` for what is purely a
@@ -125,6 +140,12 @@ export interface UiShell {
   updateShop(items: readonly ShopItemView[]): void
   /** Game over with a positive score: open the initials-submit dialog. */
   promptScoreSubmit(score: number): void
+  /** Reflect the current player (name + code) for the Profile page. `null`
+   * means "no account" (accounts disabled, or not yet created). */
+  setPlayer(player: { name: string; code: string } | null): void
+  /** Open the one-time first-run welcome overlay (name entry / restore). Only
+   * meaningful when accounts are enabled; main.ts gates it. */
+  showWelcome(): void
   /** Programmatic open of the main menu screen. Does NOT fire onMenuOpen (that's reserved for the in-game MENU button). */
   showMenu(): void
   /** Remove all DOM this shell created and detach listeners. */
@@ -155,6 +176,16 @@ export function createUiShell(opts: {
   onMenuOpen(): void
   /** The menu was dismissed without choosing (Escape / close control / RESUME). main.ts resumes. */
   onMenuClose(): void
+  /** Whether the player-accounts feature is configured. When false, the shell
+   * shows no PROFILE button and the welcome/profile/restore overlays are inert. */
+  accountsEnabled?: boolean
+  /** First-run "Create" submit: create an account for `name`. main.ts owns the
+   * network call; the shell only renders the returned success/error. */
+  onCreatePlayer?(name: string): Promise<AccountActionResult>
+  /** Restore submit: adopt the account identified by `code`. */
+  onRestorePlayer?(code: string): Promise<AccountActionResult>
+  /** Profile opened: fetch the current player's own scores (best-first). */
+  onProfileOpen?(): Promise<readonly PlayerScoreView[]>
 }): UiShell {
   const {
     adapter,
@@ -170,6 +201,10 @@ export function createUiShell(opts: {
     onMenuOpen,
     onMenuClose,
   } = opts
+  const accountsEnabled = opts.accountsEnabled ?? false
+  const onCreatePlayer = opts.onCreatePlayer ?? (async () => ({ ok: false, reason: 'network' as const }))
+  const onRestorePlayer = opts.onRestorePlayer ?? (async () => ({ ok: false, reason: 'network' as const }))
+  const onProfileOpen = opts.onProfileOpen ?? (async () => [])
   let modes = opts.modes
   let themes = opts.themes
   let shopItems = opts.shopItems
@@ -346,6 +381,16 @@ export function createUiShell(opts: {
   menuLeaderboardButton.setAttribute('aria-label', 'Open leaderboard')
   menuLeaderboardButton.addEventListener('click', () => openLeaderboard(menuLeaderboardButton))
 
+  // PROFILE row: only present when accounts are configured. Created
+  // unconditionally (so `openProfile` etc. can reference it) but only appended
+  // to the menu when `accountsEnabled`.
+  const menuProfileButton = document.createElement('button')
+  menuProfileButton.type = 'button'
+  menuProfileButton.className = 'nibble-menu-btn'
+  menuProfileButton.textContent = 'PROFILE'
+  menuProfileButton.setAttribute('aria-label', 'Open profile')
+  menuProfileButton.addEventListener('click', () => openProfile(menuProfileButton))
+
   const menuSoundButton = document.createElement('button')
   menuSoundButton.type = 'button'
   menuSoundButton.className = 'nibble-menu-btn'
@@ -364,6 +409,10 @@ export function createUiShell(opts: {
     menuSoundButton,
     menuTouchPadButton,
   )
+  // Insert PROFILE just under LEADERBOARD, only when the feature is on.
+  if (accountsEnabled) {
+    menuButtons.insertBefore(menuProfileButton, menuSoundButton)
+  }
 
   const menuResumeButton = document.createElement('button')
   menuResumeButton.type = 'button'
@@ -992,6 +1041,367 @@ export function createUiShell(opts: {
     submitDialog.close()
   }
 
+  // --- account: shared state + helpers --------------------------------
+  // The shell holds the current player only for display; main.ts owns the
+  // truth and pushes it via setPlayer().
+  let currentPlayer: { name: string; code: string } | null = null
+
+  /** Copy `text` to the clipboard, guarded for browsers/contexts without the
+   * async Clipboard API (falls back to selecting the text). Returns whether the
+   * programmatic copy succeeded. UI-layer browser concern only — no data/net. */
+  async function copyToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {
+      // fall through to the manual-select fallback
+    }
+    return false
+  }
+
+  // --- restore overlay -------------------------------------------------
+  const restoreOverlay = document.createElement('div')
+  restoreOverlay.className = 'nibble-overlay'
+  restoreOverlay.hidden = true
+
+  const restorePanel = document.createElement('div')
+  restorePanel.className = 'nibble-panel'
+
+  const restoreTitle = document.createElement('h2')
+  restoreTitle.className = 'nibble-panel-title'
+  restoreTitle.textContent = 'Restore account'
+
+  const restoreHint = document.createElement('p')
+  restoreHint.className = 'nibble-account-hint'
+  restoreHint.textContent = 'Enter your recovery code to load your progress on this device.'
+
+  const restoreLabel = document.createElement('label')
+  restoreLabel.className = 'nibble-initials-label'
+  restoreLabel.textContent = 'Recovery code'
+  restoreLabel.htmlFor = 'nibble-restore-input'
+
+  const restoreInput = document.createElement('input')
+  restoreInput.id = 'nibble-restore-input'
+  restoreInput.type = 'text'
+  restoreInput.className = 'nibble-initials-input nibble-code-input'
+  restoreInput.autocomplete = 'off'
+  restoreInput.spellcheck = false
+  restoreInput.placeholder = 'NIBBLE-XXXX-XXXX'
+  restoreInput.setAttribute('aria-label', 'Recovery code, format NIBBLE-XXXX-XXXX')
+  restoreLabel.appendChild(restoreInput)
+  // Normalize toward the code shape as the user types (uppercase; codes never
+  // contain lowercase or spaces).
+  restoreInput.addEventListener('input', () => {
+    restoreInput.value = restoreInput.value.toUpperCase()
+  })
+
+  const restoreStatus = document.createElement('p')
+  restoreStatus.className = 'nibble-account-status'
+  restoreStatus.setAttribute('role', 'status')
+  restoreStatus.hidden = true
+
+  const restoreActions = document.createElement('div')
+  restoreActions.className = 'nibble-dialog-actions'
+
+  const restoreSubmit = document.createElement('button')
+  restoreSubmit.type = 'button'
+  restoreSubmit.className = 'nibble-btn'
+  restoreSubmit.textContent = 'Restore'
+  restoreSubmit.setAttribute('aria-label', 'Restore account with this code')
+
+  const restoreCancel = document.createElement('button')
+  restoreCancel.type = 'button'
+  restoreCancel.className = 'nibble-btn'
+  restoreCancel.textContent = 'Cancel'
+  restoreCancel.setAttribute('aria-label', 'Cancel restore')
+  restoreCancel.addEventListener('click', () => restoreDialog.close())
+
+  restoreActions.append(restoreSubmit, restoreCancel)
+  restorePanel.append(restoreTitle, restoreHint, restoreLabel, restoreStatus, restoreActions)
+  restoreOverlay.appendChild(restorePanel)
+  root.appendChild(restoreOverlay)
+
+  const restoreDialog = makeDialog(restoreOverlay, restorePanel, restoreTitle)
+
+  function setRestoreStatus(text: string | null): void {
+    if (text === null) {
+      restoreStatus.hidden = true
+      restoreStatus.textContent = ''
+      return
+    }
+    restoreStatus.hidden = false
+    restoreStatus.textContent = text
+  }
+
+  async function handleRestoreSubmit(): Promise<void> {
+    const code = restoreInput.value.trim().toUpperCase()
+    if (!code) {
+      setRestoreStatus('Enter your recovery code.')
+      return
+    }
+    restoreSubmit.disabled = true
+    setRestoreStatus('Restoring…')
+    const result = await onRestorePlayer(code)
+    restoreSubmit.disabled = false
+    if (result.ok) {
+      restoreDialog.close()
+      return
+    }
+    setRestoreStatus(
+      result.reason === 'not-found'
+        ? "That code wasn't found. Check it and try again."
+        : result.reason === 'invalid'
+          ? "That doesn't look like a valid code (NIBBLE-XXXX-XXXX)."
+          : "Couldn't reach the server. Try again in a moment.",
+    )
+  }
+  restoreSubmit.addEventListener('click', () => void handleRestoreSubmit())
+  restoreInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void handleRestoreSubmit()
+    }
+  })
+
+  function openRestore(opener: HTMLElement | null): void {
+    setRestoreStatus(null)
+    restoreInput.value = ''
+    restoreDialog.open(opener, restoreInput)
+  }
+
+  // --- profile overlay -------------------------------------------------
+  const profileOverlay = document.createElement('div')
+  profileOverlay.className = 'nibble-overlay'
+  profileOverlay.hidden = true
+
+  const profilePanel = document.createElement('div')
+  profilePanel.className = 'nibble-panel'
+
+  const profileTitle = document.createElement('h2')
+  profileTitle.className = 'nibble-panel-title'
+  profileTitle.textContent = 'Profile'
+
+  const profileName = document.createElement('p')
+  profileName.className = 'nibble-account-name'
+
+  const profileCodeLabel = document.createElement('p')
+  profileCodeLabel.className = 'nibble-account-hint'
+  profileCodeLabel.textContent = 'Your recovery code'
+
+  const profileCodeRow = document.createElement('div')
+  profileCodeRow.className = 'nibble-code-row'
+
+  const profileCode = document.createElement('code')
+  profileCode.className = 'nibble-code-value'
+
+  const profileCopyButton = document.createElement('button')
+  profileCopyButton.type = 'button'
+  profileCopyButton.className = 'nibble-btn nibble-copy-btn'
+  profileCopyButton.textContent = 'Copy'
+  profileCopyButton.setAttribute('aria-label', 'Copy recovery code')
+  profileCopyButton.addEventListener('click', () => {
+    if (!currentPlayer) return
+    void copyToClipboard(currentPlayer.code).then((ok) => {
+      profileCopyButton.textContent = ok ? 'Copied!' : 'Press Ctrl+C'
+      if (!ok) {
+        // Manual fallback: select the code so the user can copy it themselves.
+        const range = document.createRange()
+        range.selectNodeContents(profileCode)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      }
+      window.setTimeout(() => {
+        profileCopyButton.textContent = 'Copy'
+      }, 2000)
+    })
+  })
+
+  profileCodeRow.append(profileCode, profileCopyButton)
+
+  const profileWarning = document.createElement('p')
+  profileWarning.className = 'nibble-account-warning'
+  profileWarning.textContent =
+    'Keep this code safe — it is the only way to recover your progress on another device.'
+
+  const profileScoresTitle = document.createElement('p')
+  profileScoresTitle.className = 'nibble-account-hint'
+  profileScoresTitle.textContent = 'Your scores'
+
+  const profileScoresList = document.createElement('ol')
+  profileScoresList.className = 'nibble-leaderboard-list'
+
+  const profileRestoreButton = document.createElement('button')
+  profileRestoreButton.type = 'button'
+  profileRestoreButton.className = 'nibble-btn'
+  profileRestoreButton.textContent = 'Restore a different account'
+  profileRestoreButton.setAttribute('aria-label', 'Restore a different account')
+  profileRestoreButton.addEventListener('click', () => openRestore(profileRestoreButton))
+
+  const profileCloseButton = document.createElement('button')
+  profileCloseButton.type = 'button'
+  profileCloseButton.className = 'nibble-btn'
+  profileCloseButton.textContent = 'Close'
+  profileCloseButton.setAttribute('aria-label', 'Close profile')
+  profileCloseButton.addEventListener('click', () => profileDialog.close())
+
+  profilePanel.append(
+    profileTitle,
+    profileName,
+    profileCodeLabel,
+    profileCodeRow,
+    profileWarning,
+    profileScoresTitle,
+    profileScoresList,
+    profileRestoreButton,
+    profileCloseButton,
+  )
+  profileOverlay.appendChild(profilePanel)
+  root.appendChild(profileOverlay)
+
+  const profileDialog = makeDialog(profileOverlay, profilePanel, profileTitle)
+
+  function renderProfileScores(scores: readonly PlayerScoreView[]): void {
+    profileScoresList.replaceChildren()
+    if (scores.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'nibble-leaderboard-empty'
+      empty.textContent = 'No scores yet.'
+      profileScoresList.appendChild(empty)
+      return
+    }
+    scores.forEach((entry, index) => {
+      const row = document.createElement('li')
+      row.className = 'nibble-leaderboard-row'
+      const rank = document.createElement('span')
+      rank.className = 'nibble-leaderboard-rank'
+      rank.textContent = `${index + 1}.`
+      const label = document.createElement('span')
+      label.className = 'nibble-leaderboard-name'
+      label.textContent = entry.modeId
+      const score = document.createElement('span')
+      score.className = 'nibble-leaderboard-score'
+      score.textContent = String(entry.score)
+      row.append(rank, label, score)
+      profileScoresList.appendChild(row)
+    })
+  }
+
+  function openProfile(opener: HTMLElement | null): void {
+    // Render what we know synchronously, then fill scores from the async fetch.
+    profileName.textContent = currentPlayer ? currentPlayer.name : ''
+    profileCode.textContent = currentPlayer ? currentPlayer.code : '—'
+    profileScoresList.replaceChildren()
+    const loading = document.createElement('li')
+    loading.className = 'nibble-leaderboard-loading'
+    loading.textContent = 'Loading…'
+    profileScoresList.appendChild(loading)
+    profileDialog.open(opener)
+    void onProfileOpen().then(
+      (scores) => renderProfileScores(scores),
+      () => renderProfileScores([]),
+    )
+  }
+
+  // --- welcome overlay (first run) ------------------------------------
+  const welcomeOverlay = document.createElement('div')
+  welcomeOverlay.className = 'nibble-overlay'
+  welcomeOverlay.hidden = true
+
+  const welcomePanel = document.createElement('div')
+  welcomePanel.className = 'nibble-panel'
+
+  const welcomeTitle = document.createElement('h2')
+  welcomeTitle.className = 'nibble-panel-title'
+  welcomeTitle.textContent = 'Welcome to Nibble'
+
+  const welcomeHint = document.createElement('p')
+  welcomeHint.className = 'nibble-account-hint'
+  welcomeHint.textContent =
+    'Pick a name to save your coins, unlocks, and scores across devices. You’ll get a recovery code to keep.'
+
+  const welcomeLabel = document.createElement('label')
+  welcomeLabel.className = 'nibble-initials-label'
+  welcomeLabel.textContent = 'Your name'
+  welcomeLabel.htmlFor = 'nibble-welcome-input'
+
+  const welcomeInput = document.createElement('input')
+  welcomeInput.id = 'nibble-welcome-input'
+  welcomeInput.type = 'text'
+  welcomeInput.className = 'nibble-initials-input'
+  welcomeInput.maxLength = MAX_NAME_LENGTH
+  welcomeInput.autocomplete = 'off'
+  welcomeInput.spellcheck = false
+  welcomeInput.setAttribute('aria-label', `Your name, up to ${MAX_NAME_LENGTH} characters`)
+  welcomeLabel.appendChild(welcomeInput)
+  welcomeInput.addEventListener('input', () => {
+    if (welcomeInput.value.length > MAX_NAME_LENGTH) {
+      welcomeInput.value = welcomeInput.value.slice(0, MAX_NAME_LENGTH)
+    }
+  })
+
+  const welcomeStatus = document.createElement('p')
+  welcomeStatus.className = 'nibble-account-status'
+  welcomeStatus.setAttribute('role', 'status')
+  welcomeStatus.hidden = true
+
+  const welcomeActions = document.createElement('div')
+  welcomeActions.className = 'nibble-dialog-actions'
+
+  const welcomeCreate = document.createElement('button')
+  welcomeCreate.type = 'button'
+  welcomeCreate.className = 'nibble-btn'
+  welcomeCreate.textContent = 'Create'
+  welcomeCreate.setAttribute('aria-label', 'Create account with this name')
+
+  const welcomeRestore = document.createElement('button')
+  welcomeRestore.type = 'button'
+  welcomeRestore.className = 'nibble-btn'
+  welcomeRestore.textContent = 'I have a code'
+  welcomeRestore.setAttribute('aria-label', 'Restore an existing account')
+  welcomeRestore.addEventListener('click', () => openRestore(welcomeRestore))
+
+  const welcomeOffline = document.createElement('button')
+  welcomeOffline.type = 'button'
+  welcomeOffline.className = 'nibble-btn nibble-btn-subtle'
+  welcomeOffline.textContent = 'Continue offline'
+  welcomeOffline.setAttribute('aria-label', 'Continue without an account')
+  welcomeOffline.addEventListener('click', () => welcomeDialog.close())
+
+  welcomeActions.append(welcomeCreate, welcomeRestore)
+  welcomePanel.append(welcomeTitle, welcomeHint, welcomeLabel, welcomeStatus, welcomeActions, welcomeOffline)
+  welcomeOverlay.appendChild(welcomePanel)
+  root.appendChild(welcomeOverlay)
+
+  const welcomeDialog = makeDialog(welcomeOverlay, welcomePanel, welcomeTitle)
+
+  async function handleWelcomeCreate(): Promise<void> {
+    const name = welcomeInput.value.trim().slice(0, MAX_NAME_LENGTH) || DEFAULT_NAME
+    welcomeCreate.disabled = true
+    welcomeStatus.hidden = false
+    welcomeStatus.textContent = 'Creating your account…'
+    const result = await onCreatePlayer(name)
+    welcomeCreate.disabled = false
+    if (result.ok) {
+      welcomeStatus.hidden = true
+      welcomeDialog.close()
+      // Surface the freshly-created code immediately so the player can save it.
+      openProfile(null)
+      return
+    }
+    welcomeStatus.textContent =
+      "Couldn't reach the server. You can continue offline and create an account later from Profile."
+  }
+  welcomeCreate.addEventListener('click', () => void handleWelcomeCreate())
+  welcomeInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void handleWelcomeCreate()
+    }
+  })
+
   return {
     setPaused(paused) {
       pauseButton.textContent = paused ? 'Resume' : 'Pause'
@@ -1049,6 +1459,19 @@ export function createUiShell(opts: {
       nameInput.select()
     },
 
+    setPlayer(player) {
+      currentPlayer = player
+      // Keep the score-submit default name aligned with the account name.
+      if (player) lastName = player.name
+    },
+
+    showWelcome() {
+      if (!accountsEnabled) return
+      welcomeStatus.hidden = true
+      welcomeInput.value = currentPlayer?.name ?? ''
+      welcomeDialog.open(null, welcomeInput)
+    },
+
     showMenu() {
       displayMenu(null)
     },
@@ -1067,6 +1490,9 @@ export function createUiShell(opts: {
       themesOverlay.remove()
       shopOverlay.remove()
       submitOverlay.remove()
+      welcomeOverlay.remove()
+      profileOverlay.remove()
+      restoreOverlay.remove()
     },
   }
 }
@@ -1490,6 +1916,70 @@ function injectStyles(): void {
       color: #e6d38a;
       font-size: 0.8rem;
       text-align: center;
+    }
+    /* --- account overlays (welcome / profile / restore) --- */
+    .nibble-account-hint {
+      margin: 0;
+      font-size: 0.85rem;
+      opacity: 0.85;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .nibble-account-name {
+      margin: 0;
+      font-size: 1.1rem;
+      text-align: center;
+    }
+    .nibble-account-warning {
+      margin: 0;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #6f5a2a;
+      border-radius: 3px;
+      background: #2a2413;
+      color: #e6d38a;
+      font-size: 0.78rem;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .nibble-account-status {
+      margin: 0;
+      font-size: 0.8rem;
+      text-align: center;
+      opacity: 0.9;
+    }
+    .nibble-code-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+    }
+    .nibble-code-value {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1c16;
+      border: 1px solid #c4cfa1;
+      border-radius: 2px;
+      padding: 0.4rem 0.6rem;
+      font-family: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+      font-size: 1.1rem;
+      letter-spacing: 0.12em;
+      user-select: all;
+      -webkit-user-select: all;
+      overflow-wrap: anywhere;
+    }
+    .nibble-copy-btn {
+      flex: 0 0 auto;
+    }
+    .nibble-code-input {
+      /* Codes are typed uppercase; keep them wide enough for NIBBLE-XXXX-XXXX. */
+      max-width: none;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .nibble-btn-subtle {
+      opacity: 0.75;
+      font-size: 0.85rem;
     }
     .nibble-themes-list {
       list-style: none;
