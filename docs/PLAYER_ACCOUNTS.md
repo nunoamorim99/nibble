@@ -111,11 +111,23 @@ once per session. So the game never blocks on this being up.
 - **Rate-limit**: creations per IP/hour, and sync/submit per code + per IP, to
   blunt scripted abuse.
 
-### Deno skeleton
+### The function
 
-Save as `supabase/functions/player/index.ts` and deploy with
-`supabase functions deploy player`. This is a starting point — add the
-rate-limiting and tighten validation for your needs.
+A complete, ready-to-deploy implementation lives in the repo at
+**`supabase/functions/player/index.ts`** — CORS-correct (the game calls it
+cross-origin from GitHub Pages), matched to the client contract above, with the
+`max(coins)` / union-unlocks ratchet and value clamps already wired. It has no
+rate-limiting yet (add it when abuse becomes a concern).
+
+Deploy it either way:
+- **Dashboard (no tooling):** Edge Functions → *Deploy a new function* (or
+  *Create via editor*) → name it exactly `player` → paste the file's contents →
+  Deploy. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected
+  automatically; no secrets to set.
+- **CLI:** `supabase functions deploy player` from the repo root.
+
+The reference skeleton below is the same logic in a slightly shorter form, for
+illustration — prefer the committed file.
 
 ```ts
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
