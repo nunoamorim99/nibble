@@ -13,7 +13,7 @@ Cover at least:
 - Food never spawns on the snake or an obstacle (property test over many seeds).
 - Level advance when apples-to-advance is reached; modifier flags apply correctly.
 - Speed scaling by the level multiplier.
-- Score → coin conversion math.
+- Personal-best recording: per mode (Classic and Levels never share a bucket), and only when a round actually beats the stored best.
 
 Also maintain a manual checklist in `tests/PLAYTEST.md` (feel, input latency, difficulty curve, theme switching, install/offline).
 

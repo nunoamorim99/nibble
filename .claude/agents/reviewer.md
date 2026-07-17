@@ -11,8 +11,8 @@ Review the changed files against the repo's invariants (see `CLAUDE.md`):
 - Engine purity: no DOM/canvas/window in `src/engine`; no non-deterministic calls inside update; no imports from render/ui/data.
 - No game logic in the renderer.
 - Themes and levels are data-only; new content did not require engine edits.
-- Economy unlocks are cosmetic; economy numbers live in config.
 - Persistence goes through the single adapter interface.
+- The game stays offline-only: no network calls, no accounts, no backend, no build-time secrets. Every theme is free from the start.
 - Tests accompany engine changes.
 
 Return findings as a prioritized list — blocking / should-fix / nit — each with `file:line` and a one-line fix suggestion.

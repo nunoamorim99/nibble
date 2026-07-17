@@ -1,6 +1,6 @@
 /**
- * Sound module — pure WebAudio synthesis, no audio assets. Produces four
- * short Nokia-ish square/triangle blips: eat, gameover, levelclear, purchase.
+ * Sound module — pure WebAudio synthesis, no audio assets. Produces three
+ * short Nokia-ish square/triangle blips: eat, gameover, levelclear.
  *
  * Lazy `AudioContext`: created (and resumed) on first `play()` after a user
  * gesture has occurred. If the browser keeps the context suspended (no
@@ -10,7 +10,7 @@
  * quiet.
  */
 
-export type SoundEffect = 'eat' | 'gameover' | 'levelclear' | 'purchase'
+export type SoundEffect = 'eat' | 'gameover' | 'levelclear'
 
 export interface SoundPlayer {
   /** Play one effect. No-op while muted, while the context is unavailable/suspended, or (for 'eat') within the debounce window. */
@@ -54,12 +54,6 @@ const EFFECTS: Record<SoundEffect, readonly ToneStep[]> = {
     { freq: 659, type: 'square', startOffset: 0.09, duration: 0.09 },
     { freq: 784, type: 'square', startOffset: 0.18, duration: 0.09 },
     { freq: 1047, type: 'square', startOffset: 0.27, duration: 0.14 },
-  ],
-
-  // Two-tone "cha-ching".
-  purchase: [
-    { freq: 880, type: 'triangle', startOffset: 0, duration: 0.08 },
-    { freq: 1318, type: 'triangle', startOffset: 0.08, duration: 0.16 },
   ],
 }
 

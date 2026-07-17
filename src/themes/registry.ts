@@ -17,7 +17,8 @@ import { neonTheme } from './neon'
 /** Theme selected on first run / when no persisted choice exists. */
 export const DEFAULT_THEME_ID = 'classic'
 
-/** All themes, in ladder (unlock) order. */
+/** All themes, in ladder order (oldest look first). Every theme is available
+ * from the start — the ladder is presentation order, not an unlock gate. */
 export const themeRegistry: readonly Theme[] = [
   classicTheme,
   monoPlusTheme,

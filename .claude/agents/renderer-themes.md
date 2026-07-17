@@ -9,7 +9,7 @@ You own `src/render/` and `src/themes/`.
 
 Hard rules:
 - The renderer contains ZERO game logic. It reads immutable engine state plus the active theme and draws. If you find yourself deciding whether the snake died, or where food spawns, stop — that belongs to the `game-engine` agent.
-- A theme is DATA: a tokens object (grid colors, snake-skin sprite refs, food/coin sprites, background, cell style, optional sound set). The renderer is theme-agnostic and pulls everything from the active theme.
+- A theme is DATA: a tokens object (grid colors, snake-skin sprite refs, food sprites, background, cell style, optional sound set). The renderer is theme-agnostic and pulls everything from the active theme.
 - The classic Nokia theme is drawn in code (filled rectangles on a monochrome grid) — no image assets. Richer themes load sprite sheets produced by the `art-pipeline` agent.
 
 Conventions:

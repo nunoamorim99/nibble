@@ -6,48 +6,50 @@ this checklist covers everything that only a human on a real device can
 judge — feel, latency, difficulty pacing, visual/theme correctness, and
 install/offline behavior.
 
-**Status: Phase 1 (Classic MVP) in progress.** The pure engine (`src/engine/`)
-now exists and has automated coverage (movement, growth, 180° reversal guard,
-self/wall/obstacle collision, food spawn safety, win conditions). The
-renderer, keyboard input wiring, and `main.ts` game loop are landing next —
-once they do, classic mode becomes playable end-to-end for the first time.
-Themes, levels/challenges, and the PWA shell (sections 2–4 below) are still
-out of scope until their respective phases. Do not check anything off until
-the corresponding feature actually exists and has been played on the real
-build (dev server or preview), not inferred from passing unit tests — unit
-tests prove the engine's logic, not how the game feels or behaves end-to-end.
+**Status: Nibble is an offline-only, single-device game.** There is no
+coin economy, no shop, no theme lock state, no leaderboard (local or
+networked), no player accounts, and no network calls of any kind — the game
+makes zero requests. The only score kept is the player's own personal best,
+recorded **per mode** (Classic and Levels each keep their own best). Classic
+mode, Levels mode, all 7 themes, the on-screen D-pad, sound, and the PWA
+shell are all in scope below. Do not check anything off until the
+corresponding feature has actually been played on the real build (dev server
+or preview), not inferred from passing unit tests — unit tests prove the
+engine's logic, not how the game feels or behaves end-to-end.
 
-How to use this file: when a phase adds playable functionality, come back
-here, play the build on real hardware (not just dev-server-on-desktop), and
-check off items honestly. Add notes (device, browser, what felt off) next to
-any item that's borderline. Leave items unchecked if untested or if behavior
-is questionable — do not check a box "on faith."
+How to use this file: when a change lands, come back here, play the build on
+real hardware (not just dev-server-on-desktop), and check off items
+honestly. Add notes (device, browser, what felt off) next to any item that's
+borderline. Leave items unchecked if untested or if behavior is
+questionable — do not check a box "on faith."
 
 ---
 
 ## 1. Game feel & input latency
 
-_Status: Phase 1 target — classic mode (keyboard only) once the renderer and
-`main.ts` loop land. Touch/swipe and pause are Phase 2; leave those items
-unchecked until then._
-
 ### Ready gate (round start)
 
 - [ ] Opening the page shows a READY overlay with the snake holding still — the round does NOT run (or end) unattended before the first input
-- [ ] The first arrow key / WASD press (or swipe on mobile) starts the round AND steers the snake in that direction in one action
+- [ ] The first arrow key / WASD press (or swipe/D-pad tap on mobile) starts the round AND steers the snake in that direction in one action
 - [ ] After a restart, a mode switch, or advancing to the next level, the new round again waits at READY for the first turn input
 - [ ] P/Escape and the Pause button do nothing while at READY (nothing to pause yet)
 
 ### Keyboard steering
 
 - [ ] Arrow keys change direction with no perceptible lag between keypress and the snake visibly turning
-- [ ] WASD changes direction with no perceptible lag (if wired up alongside arrow keys)
+- [ ] WASD changes direction with no perceptible lag
 - [ ] Direction changes queued between ticks are applied on the very next tick, not dropped
 - [ ] Rapid, repeated key presses don't desync the snake from visible input (no missed or double-applied turns)
 - [ ] Holding a direction key doesn't repeat-fire extra turns via OS key-repeat
 - [ ] Forbidden 180° reversal (e.g. pressing left while moving right) is silently ignored — does not crash, does not kill the snake, does not visibly stutter
 - [ ] Queuing a legal turn opposite to an already-buffered turn (e.g. moving right, tapping up then down before the next tick) resolves the way it feels like it should to a player, not just the way the engine defines it as "legal"
-- [ ] Touch/swipe input (mobile) — **not in scope for Phase 1**, confirm it is simply absent/inert rather than half-wired or crashing on mobile browsers
+
+### Touch & on-screen D-pad
+
+- [ ] Swipe input changes direction with no perceptible lag on a touch device
+- [ ] Enabling "TOUCH PAD" in the menu shows the on-screen D-pad, and each direction button steers immediately on tap
+- [ ] Disabling "TOUCH PAD" hides the D-pad without breaking swipe input
+- [ ] The D-pad and swipe input agree with keyboard behavior on the 180°-reversal guard (no reversal accepted from any input method)
 
 ### Movement & growth readability
 
@@ -55,42 +57,36 @@ unchecked until then._
 - [ ] Growth on eating feels immediate and readable — the apple disappears and the snake visibly lengthens without a confusing delay
 - [ ] The next food pellet appears somewhere clearly visible and never appears to spawn on/under the snake
 
+### Pause
+
+- [ ] The Pause button (or documented key) pauses the round; the snake stops ticking and does not silently keep moving in the background
+- [ ] Resuming from pause doesn't lose or duplicate a tick, and doesn't consume the direction key press used to resume as a turn (unless that's the documented behavior)
+- [ ] Pausing and resuming repeatedly never leaves the game in a stuck state
+
 ### Game over & restart flow
 
-- [ ] Game-over moment (wall collision, in classic mode) is clearly telegraphed, not jarring or confusing
+- [ ] Game-over moment (wall collision, in classic mode with `wallsKill`) is clearly telegraphed, not jarring or confusing
 - [ ] Game-over moment (self collision) is clearly telegraphed, not jarring or confusing
 - [ ] A game-over overlay/screen appears showing at least the final score
 - [ ] The game-over overlay clearly indicates how to restart (button and/or a documented key)
 - [ ] Restarting starts a brand-new session: score resets to 0, snake resets to the initial length-3 centered state, a fresh food cell appears
 - [ ] Restarting quickly in succession (e.g. spamming the restart action) never leaves the game in a stuck or double-initialized state
 - [ ] There is no way to keep controlling the snake or trigger a "turn" after game-over but before restart
+- [ ] The control bar's "New Game" button restarts the current mode the same way the documented restart key does
 
-### High score persistence
+### Personal best persistence (per mode)
 
-- [ ] Beating the previous high score updates the displayed high score in the same session
-- [ ] The high score is visible somewhere during play or at minimum on the game-over screen
-- [ ] Reloading the page (hard refresh) preserves the high score from the previous session
-- [ ] Closing and reopening the browser tab/window preserves the high score
-- [ ] A new session that does *not* beat the high score leaves the stored high score unchanged after reload
-- [ ] Clearing site data (or first-ever load) starts high score at 0/empty rather than crashing or showing `undefined`/`NaN`
-
-### Deferred to Phase 2
-
-- [ ] Touch/swipe input (mobile) changes direction with no perceptible lag (superseded by the "not in scope" check above once Phase 2 lands touch support)
-- [ ] Pause/resume doesn't lose or duplicate a tick
+- [ ] Beating the previous personal best updates the displayed best in the same session, for whichever mode is active
+- [ ] The personal best is visible somewhere during play or at minimum on the game-over screen, in both Classic and Levels mode
+- [ ] Reloading the page (hard refresh) preserves the personal best from the previous session, for both modes independently
+- [ ] Closing and reopening the browser tab/window preserves the personal best
+- [ ] A new session that does *not* beat the personal best leaves the stored best unchanged after reload
+- [ ] Clearing site data (or first-ever load) starts the personal best at 0/empty rather than crashing or showing `undefined`/`NaN`
+- [ ] Setting a new best in Levels mode does NOT overwrite or clobber the Classic best, and vice versa — play both modes in the same session, beat the best in only one, and confirm the other is untouched after reload
+- [ ] The HUD shows the active mode's best while playing Levels mode (not just in Classic) — confirm the number shown matches Levels' own stored best, not Classic's
+- [ ] A player with an existing pre-update (v1 schema) database still sees their old Classic high score correctly after loading the updated build — test with a browser profile that has actually played an older build, not a fresh profile (see PWA section for the upgrade-path note)
 
 ## 2. Difficulty curve & level mode
-
-_Status: Phase 5 (level mode + challenges) has landed — `src/levels/` now
-supplies 8 configs (`LEVELS`, all 20×20) via `levelToGameConfig`, and
-`main.ts`/the UI mode panel switch between Classic and Levels, track
-highest-unlocked progress, and drive the LEVEL CLEAR / retry / advance flow.
-Automated tests (`tests/levels/levels.test.ts`) already prove the level data
-validates, the difficulty curve is non-decreasing, and the engine integration
-(spawn safety, `applesToAdvance` win) works through the level pipeline — this
-section is for everything only a human playing the real build can judge:
-feel, pacing, and that the UI wiring in `main.ts`/`ui/shell.ts` actually does
-what the HUD claims._
 
 ### Mode switching & progression
 
@@ -144,16 +140,10 @@ what the HUD claims._
 
 ## 3. Theme switching
 
-_Status: Phase 6 (Content + juice) has landed — 7 themes total in
-`src/themes/` (classic, monoPlus, firstColor, coloredPixel, detailedPixel,
-cartoon, neon), the last three shipping as spritesheet themes (detailed-pixel,
-cartoon, neon) with Higgsfield scenic backgrounds under `public/assets/` and
-sprite-based rendering (`src/render/sprites.ts`) that falls back to the
-token-driven draw if a sheet is missing/slow to load. The shop catalog
-(`src/data/economy.config.ts`) now has 6 purchasable items priced 50→500
-coins in strictly increasing order; classic remains free/always-unlocked.
-Play the real build for all of the below — do not check anything off from
-reading code or from `npm run test` passing._
+All 7 themes are unlocked and selectable from the start — there is no lock
+state, no 🔒 marker, and no purchasing anywhere in the app. Play the real
+build for all of the below — do not check anything off from reading code or
+from `npm run test` passing.
 
 ### All themes render
 
@@ -161,6 +151,10 @@ reading code or from `npm run test` passing._
       detailed-pixel, cartoon, neon) can be selected from the theme panel and
       renders the snake, food, and grid with no missing/undefined colors or
       blank sprites
+- [ ] Every theme row in the panel is selectable on first load with no
+      locked/disabled state — confirm on a completely fresh profile/site-data
+      clear, not just a profile that's already "purchased" things from an
+      older build
 - [ ] Switching themes from the panel applies immediately (or with a clear,
       brief loading state while a spritesheet fetches) — no stale frame from
       the previous theme lingering
@@ -183,17 +177,6 @@ reading code or from `npm run test` passing._
 - [ ] On a wrap-around level/mode played with a sprite theme, a segment that
       just wrapped across an edge still shows a continuous, correctly
       oriented sprite rather than a visibly wrong tile at the seam
-
-### Shop lock state
-
-- [ ] Every locked (not-yet-purchased) theme shows the 🔒 marker next to its
-      name in the theme panel and cannot be selected by clicking/tapping it
-      (row is visibly disabled/dimmed)
-- [ ] Buying a theme in the shop immediately removes its 🔒 in the theme
-      panel (no reload needed) and makes it selectable
-- [ ] A locked theme's row is still reachable by keyboard (Tab) and announces
-      itself as locked (screen reader / accessible name), it just cannot be
-      activated
 
 ### Background & readability (cartoon, neon)
 
@@ -235,15 +218,15 @@ reading code or from `npm run test` passing._
 
 ## 4. PWA install & offline
 
-_Status: pending — no manifest, service worker, or offline caching yet._
-
 - [ ] App is installable (browser shows install prompt / add-to-home-screen works)
 - [ ] Installed app launches in standalone mode (no browser chrome)
 - [ ] App icon and splash screen render correctly on the home screen
-- [ ] Gameplay works fully offline after first load (service worker cache hit)
-- [ ] Returning online after an offline session doesn't lose local progress (scores/coins)
+- [ ] Gameplay works fully offline after first load (service worker cache hit) — confirm with the network fully disabled (airplane mode or devtools offline), not just unplugged Wi-Fi with a captive portal
+- [ ] The app makes zero network requests during normal play — check the network panel across a full session (menu, both modes, theme switching, game over) and confirm nothing is ever dispatched
+- [ ] Returning online after an offline session doesn't lose local progress (personal bests, level progress, theme/sound settings)
 - [ ] App updates (new service worker) prompt the user or apply cleanly without data loss
 - [ ] Cold start time (installed, offline) is acceptable
+- [ ] A profile that played an older build (IndexedDB schema v1, with the now-removed `leaderboard` object store) opens cleanly on this build: the upgrade runs once, the old store is gone, and the player's previous Classic high score is still there — see the version-history note in `src/data/local.ts` for exactly what should survive
 
 ### Mobile layout & touch (real device)
 
@@ -253,42 +236,31 @@ _Layout verified in emulation (portrait 390×844, landscape 844×390, narrow 360
 - [ ] Landscape: board shrinks to fit beside/above the bar; menu and panels scroll from the top instead of clipping
 - [ ] Swipes steer reliably during play and never trigger pull-to-refresh or page scroll
 - [ ] All bar/menu buttons are comfortably tappable one-handed (≥44px targets); no double-tap zoom delay
-- [ ] Focusing the initials input does NOT zoom the page (iOS ≥16px font rule)
 - [ ] Rotating the device mid-game keeps the board square and playable
 
 ## 5. Sound & accessibility
 
-_Status: Phase 6 (Content + juice) has landed — WebAudio sound
-(`src/ui/sound.ts`, synthesized, no audio assets) with four effects (eat,
-gameover, levelclear, purchase) and a mute button whose state persists via
-the storage adapter, plus a full a11y pass on every overlay panel
-(`src/ui/shell.ts`): each is a `role="dialog"` with `aria-modal="true"` and
-`aria-labelledby`, traps Tab within itself, closes on Escape (which is
-explicitly stopped from bubbling to the page-level pause handler), and
-restores focus to whatever opened it on close. The coin counter and
-level-info label are `aria-live="polite"`. Play the real build with an
-actual keyboard and, where possible, a screen reader — do not check anything
-off from reading code._
+Play the real build with an actual keyboard and, where possible, a screen
+reader — do not check anything off from reading code.
 
 ### Sound
 
 - [ ] Eating an apple plays a short, distinct rising blip, audibly different
-      from the other three effects
+      from the other two effects
 - [ ] Dying (wall/self/obstacle, any mode) plays the descending
       game-over tone
 - [ ] Clearing a level (or Classic-equivalent win state, if applicable) plays
       the ascending level-clear jingle, audibly different from game-over
-- [ ] Buying an item in the shop plays the two-tone "cha-ching" purchase sound
 - [ ] Rapidly eating several apples in quick succession does not spam/overlap
       the eat sound into a garbled mess (debounce feels natural, not
       sluggish)
-- [ ] Toggling the mute button silences all four effects immediately; a
+- [ ] Toggling the mute button silences all three effects immediately; a
       sound already mid-play when muted is allowed to finish but no new
       sound starts
 - [ ] Un-muting restores sound on the very next triggering event, no reload
       needed
 - [ ] Mute state persists across a hard reload and across closing/reopening
-      the tab (survives exactly like theme choice/high score do)
+      the tab (survives exactly like theme choice/personal best do)
 - [ ] First-ever load (no prior mute preference saved) defaults to a
       sensible state (unmuted) rather than crashing or showing an
       indeterminate mute-button state
@@ -297,9 +269,9 @@ off from reading code._
 
 ### Panels: focus, keyboard, and Escape behavior
 
-- [ ] Opening any overlay panel (mode select, theme select, shop,
-      leaderboard/settings — whichever exist in the build) moves keyboard
-      focus into the panel, not left behind on the page underneath
+- [ ] Opening any overlay panel (mode select, theme select — whichever exist
+      in the build) moves keyboard focus into the panel, not left behind on
+      the page underneath
 - [ ] Pressing Tab repeatedly inside an open panel cycles only through that
       panel's focusable elements — focus never escapes to page content behind
       the panel (Shift+Tab from the first element wraps to the last, and vice
@@ -314,25 +286,23 @@ off from reading code._
 - [ ] Closing a panel (via Escape, a close button, or clicking outside, per
       whichever are wired up) returns keyboard focus to whichever button
       originally opened it, not to the top of the page or nowhere
-- [ ] Every interactive control inside every panel (buttons, theme rows, shop
-      items, mute toggle, close button) is reachable via Tab alone, with no
+- [ ] Every interactive control inside every panel (buttons, theme rows, mode
+      rows, mute toggle, close button) is reachable via Tab alone, with no
       mouse, and each shows a visible focus indicator
 - [ ] Activating a focused control with Enter or Space works the same as
       clicking it, for every button type in every panel
 
 ### Live announcements & screen reader basics
 
-- [ ] With a screen reader running, the coin counter's value change (after
-      earning coins or making a purchase) is announced without needing to
-      manually re-focus it (`aria-live="polite"` on the coin counter is
-      actually firing, not just present in markup)
 - [ ] With a screen reader running, the level-info label's change (entering
-      a new level, or switching Classic ↔ Levels) is likewise announced
-      automatically
+      a new level, or switching Classic ↔ Levels) is announced
+      automatically, without needing to manually re-focus it
+      (`aria-live="polite"` on the level-info label is actually firing, not
+      just present in markup)
 - [ ] Each open panel is announced as a dialog with a meaningful name
       (reads out the panel's title, not "dialog" alone or a blank name)
-- [ ] Locked theme rows are announced as locked (per section 3) rather than
-      silently skipped or announced identically to unlocked rows
+- [ ] Every theme row is announced identically as a normal, selectable option
+      (no locked/disabled state ever announced, since none exists)
 - [ ] No panel or control produces a screen-reader announcement that is
       misleading, duplicated on every keystroke, or completely silent when it
       shouldn't be

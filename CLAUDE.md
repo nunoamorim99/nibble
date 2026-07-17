@@ -4,7 +4,9 @@ Project memory and working rules for this repository. Read this fully before mak
 
 ## What we're building
 
-A Nokia-style Snake game for the web, installable as a PWA, built as a learning project to understand game-loop and game-state logic from scratch. Later phases add a level mode, selectable themes, a cosmetic economy (coins → skins/themes), and eventually a native wrapper. See `PROJECT_PLAN.md` for the phased roadmap.
+A Nokia-style Snake game for the web, installable as a PWA, built as a learning project to understand game-loop and game-state logic from scratch. It has a classic mode, a level mode, and a set of freely selectable themes; a native wrapper is the remaining phase. See `PROJECT_PLAN.md` for the phased roadmap.
+
+**Scope: the game is offline-only and front-end-only.** It ships as a static build on GitHub Pages with no backend, no accounts, no network calls, and no build-time secrets or env vars. Earlier versions had a coin economy with a cosmetic shop, a Supabase-backed global leaderboard, and optional cross-device accounts; all of it was removed (see git history) when the Supabase project was retired. The only score kept is the player's personal best per mode, stored on-device, shown as the number to beat. Every theme is unlocked from the start. **Do not reintroduce a backend, an economy, or an unlock gate without an explicit decision to change this.**
 
 ## Tech stack
 
@@ -20,13 +22,13 @@ Node 20+ recommended.
 
 ## Architecture — five decoupled layers
 
-The whole feature set (modes, themes, skins, levels, economy) stays manageable only because these layers do not reach into each other's internals. **This is the most important rule in the repo.**
+The whole feature set (modes, themes, skins, levels) stays manageable only because these layers do not reach into each other's internals. **This is the most important rule in the repo.**
 
 1. **Engine** (`src/engine/`) — PURE game logic: grid, snake, tick/update, collision, food, scoring, and the mode/level rule engine. No canvas, no DOM, no `window`, no `document`. No `Date.now()` or `Math.random()` buried inside update logic — inject time and a seedable RNG so updates are deterministic and testable. Given `(state, input, config)`, `update` returns the next state. This is the part being learned; keep it small and testable.
 2. **Renderer** (`src/render/`) — reads immutable engine state + the active theme and draws to the canvas. Contains **zero** game rules. If a rule lives in the renderer, it's a bug.
-3. **Themes** (`src/themes/`) — data only. A theme = tokens (grid colors, snake-skin sprite refs, food/coin sprites, background, cell style, optional sounds). Swapping a theme is swapping a data object.
+3. **Themes** (`src/themes/`) — data only. A theme = tokens (grid colors, snake-skin sprite refs, food sprites, background, cell style, optional sounds). Swapping a theme is swapping a data object.
 4. **Content / levels** (`src/levels/`) — data only. Each level or challenge is a config object: grid size, obstacle layout, apples-to-advance, and modifier flags (`speedMultiplier`, `wallsKill`, `wrapAround`, `obstacleSet`). The engine READS these flags; it never hardcodes a mode.
-5. **Persistence & economy** (`src/data/`) — IndexedDB behind one adapter interface. High scores, coin balance, unlocked cosmetics, leaderboard. Swappable for a remote backend later without touching the game.
+5. **Persistence** (`src/data/`) — IndexedDB behind one adapter interface, with an in-memory fallback when IndexedDB is unusable. Deliberately small: personal best per mode, plus opaque string settings. No network, no accounts.
 
 Dependency direction points inward: `render → engine` (read-only), `ui → engine + data`, `data → nothing game-specific`. **The engine depends on nothing above it.**
 
@@ -51,8 +53,8 @@ snake-game/
 │  ├─ render/            # canvas rendering only
 │  ├─ themes/            # theme data + registry
 │  ├─ levels/            # level/challenge config + schema
-│  ├─ data/              # IndexedDB adapter, scores, economy config, leaderboard adapter
-│  └─ ui/                # menus, mode/theme select, shop, leaderboard, settings
+│  ├─ data/              # IndexedDB adapter — high scores + settings
+│  └─ ui/                # menus, mode/theme select, settings
 ├─ assets/
 │  └─ sprites/           # generated art per theme (Phase 3+)
 └─ tests/
@@ -65,7 +67,8 @@ snake-game/
 - **Tick**: one fixed logical tick advances state; the renderer may interpolate between ticks but state is the source of truth. Speed = base ticks/sec × `level.speedMultiplier`.
 - **Modes & challenges** are modifier flags in level config, never `if (mode === ...)` branches in the engine.
 - **Food spawn** must never land on the snake or an obstacle. Use the injected RNG.
-- **Economy** numbers (points-per-coin, item prices, spawn rates) live in `src/data/economy.config.ts`. Baseline: points → coins conversion. **Unlocks are cosmetic only — never gameplay advantages.**
+- **Themes** are all available from the start. There is no unlock gate, no currency, and no shop.
+- **Scores**: the only score kept is the player's personal best, per mode (Classic and Levels never share a bucket), stored on-device.
 - **Persistence** always goes through the single adapter interface.
 
 ## Commands
@@ -81,8 +84,8 @@ snake-game/
 |---|---|
 | `game-engine` | Core logic: loop, movement, collision, food, mode/level rule engine |
 | `renderer-themes` | Canvas drawing + theme system (tokens, sprites, animation) |
-| `ui-shell` | Menus, shop, leaderboard/settings screens, routing, PWA shell |
-| `persistence-economy` | IndexedDB, high scores, coins, unlocks, leaderboard adapter |
+| `ui-shell` | Menus, theme select, settings screens, routing, PWA shell |
+| `persistence` | IndexedDB, high scores, settings |
 | `level-designer` | Level/challenge config data + difficulty balance |
 | `art-pipeline` | Generate + process art via Higgsfield MCP for richer themes |
 | `qa-tester` | Write/run engine unit tests; maintain playtest checklist |

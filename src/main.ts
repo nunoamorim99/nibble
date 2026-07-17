@@ -15,27 +15,14 @@ import {
   type Theme,
 } from './themes'
 import { LEVELS, levelToGameConfig } from './levels'
-import {
-  CODE_PATTERN,
-  SHOP_CATALOG,
-  createPlayerRuntime,
-  grantCoinsForScore,
-  isThemeUnlocked,
-  normalizeCode,
-  purchaseItem,
-  reconcile,
-} from './data'
+import { createAdapter } from './data'
 import {
   createInputController,
   createSoundPlayer,
   createUiShell,
-  type AccountActionResult,
-  type PlayerScoreView,
-  type ShopItemView,
   type ThemeOption,
 } from './ui'
 
-const MODE_ID = 'classic'
 const MODE_CLASSIC = 'classic'
 const MODE_LEVELS = 'levels'
 const MAX_FRAME_MS = 250
@@ -52,16 +39,15 @@ if (!canvasEl) throw new Error('Canvas #game not found')
 const canvas: HTMLCanvasElement = canvasEl
 
 const renderer = createRenderer(canvas)
-// Player-accounts runtime: `storage` is the composed adapter (local →
-// leaderboard → player-sync). `identity`/`playerClient`/`accountsEnabled` drive
-// the optional cross-device account. When accounts are disabled these are inert
-// and `storage` behaves exactly like the old `createAdapter()`.
-const { adapter: storage, identity, playerClient, accountsEnabled } = createPlayerRuntime()
+// Offline-only, single-device storage: the local IndexedDB adapter (which
+// self-heals to in-memory if IndexedDB is unusable).
+const storage = createAdapter()
 const sound = createSoundPlayer()
 
+// Personal best for the mode currently being played — the only score the game
+// keeps, shown in the HUD as the number to beat. Keyed per mode (see
+// `modeKey`), so a level run never overwrites the classic best.
 let highScore = 0
-let coins = 0
-let unlocks: readonly string[] = []
 let activeTheme: Theme = classicTheme
 let mode: GameMode = { kind: 'classic' }
 let highestLevelUnlocked = 0
@@ -89,9 +75,23 @@ function newGame(): GameState {
 
 let state = newGame()
 
-void storage.getHighScore(MODE_ID).then((saved) => {
-  highScore = Math.max(highScore, saved)
-})
+/** Storage key for the active mode's personal best. Classic and Levels keep
+ * separate bests — they are different challenges, so one must not overwrite
+ * the other. */
+function modeKey(): string {
+  return mode.kind === 'level' ? MODE_LEVELS : MODE_CLASSIC
+}
+
+/** Load the active mode's best into `highScore` (0 when none recorded yet). */
+function loadHighScore(): Promise<void> {
+  const key = modeKey()
+  return storage.getHighScore(key).then((saved) => {
+    // Ignore a late resolve for a mode the player already switched away from.
+    if (key === modeKey()) highScore = saved
+  })
+}
+
+void loadHighScore()
 
 function currentLevelNumber(): number {
   return mode.kind === 'level' ? mode.index + 1 : 0
@@ -102,23 +102,18 @@ function hasNextLevel(): boolean {
 }
 
 function onRoundEnd(finished: GameState): void {
-  if (mode.kind === 'classic') {
-    if (finished.score > highScore) {
-      highScore = finished.score
-      void storage.setHighScore(MODE_ID, finished.score)
-    }
-    if (finished.score > 0) shell.promptScoreSubmit(finished.score)
-  } else if (finished.status === 'won') {
+  // A new personal best for whichever mode was played — the game's only score.
+  if (finished.score > highScore) {
+    highScore = finished.score
+    void storage.setHighScore(modeKey(), finished.score)
+  }
+  if (mode.kind === 'level' && finished.status === 'won') {
     const nextIndex = mode.index + 1
     if (nextIndex < LEVELS.length && nextIndex > highestLevelUnlocked) {
       highestLevelUnlocked = nextIndex
       void storage.setSetting(SETTING_LEVEL_PROGRESS, String(nextIndex))
     }
   }
-  void grantCoinsForScore(storage, finished.score).then((balance) => {
-    coins = balance
-    shell.setCoins(balance)
-  })
   sound.play(finished.status === 'won' ? 'levelclear' : 'gameover')
 }
 
@@ -172,6 +167,9 @@ function setMode(id: string, persist: boolean): void {
   mode = wantLevels ? { kind: 'level', index: highestLevelUnlocked } : { kind: 'classic' }
   shell.setActiveMode(wantLevels ? MODE_LEVELS : MODE_CLASSIC)
   if (persist) void storage.setSetting(SETTING_MODE, wantLevels ? MODE_LEVELS : MODE_CLASSIC)
+  // Each mode has its own best; show the one for the mode we just entered.
+  highScore = 0
+  void loadHighScore()
   requestRestart(true)
 }
 
@@ -183,141 +181,9 @@ function setTheme(id: string, persist: boolean): void {
   if (persist) void storage.setSetting(SETTING_THEME, id)
 }
 
+/** Every theme is available from the start — there is nothing to unlock. */
 function themeOptions(): readonly ThemeOption[] {
-  return themeRegistry.map((theme) => ({
-    id: theme.id,
-    name: theme.name,
-    locked: !isThemeUnlocked(theme.id, unlocks),
-  }))
-}
-
-function shopItemViews(): readonly ShopItemView[] {
-  return SHOP_CATALOG.map((item) => ({
-    id: item.id,
-    name: item.name,
-    price: item.price,
-    owned: unlocks.includes(item.id),
-  }))
-}
-
-async function refreshEconomy(): Promise<void> {
-  const [balance, owned] = await Promise.all([storage.getCoins(), storage.getUnlocks()])
-  coins = balance
-  unlocks = owned
-  shell.setCoins(coins)
-  shell.updateThemes(themeOptions())
-  shell.updateShop(shopItemViews())
-}
-
-// --- player accounts (optional) ---------------------------------------
-// All the networking lives behind `playerClient`; the shell only fires these
-// callbacks and renders their results, so the UI layer never touches fetch.
-
-// Serializes account adoption so a second create/restore can't interleave with
-// an in-flight one (belt-and-suspenders beyond the modal/disabled-button UI).
-let adoptInFlight: Promise<void> = Promise.resolve()
-
-/** Merge a fetched account into local storage (max coins / union unlocks),
- * then push the merged result up ONCE so devices converge, and refresh the UI.
- *
- * Ordering matters and is deliberate:
- *  1. Clear the current identity so the local writes below do NOT trigger the
- *     sync decorator's per-write push (which would target a stale account and
- *     fire N times for N unlocks).
- *  2. Write the reconciled coins/unlocks locally (no network).
- *  3. Set the new identity, then push the merged snapshot exactly once via the
- *     client. The server's own max/union merge makes this converge safely even
- *     if a concurrent device also pushed.
- * Reconcile is `max(coins)` + `union(unlocks)`, so this never lowers coins or
- * drops an unlock — a concurrent local write at worst gets re-merged, never lost.
- */
-function adoptAccount(account: {
-  name: string
-  code: string
-  coins: number
-  unlocks: readonly string[]
-}): Promise<void> {
-  const run = async () => {
-    const localCoins = await storage.getCoins()
-    const localUnlocks = await storage.getUnlocks()
-    const merged = reconcile(
-      { coins: localCoins, unlocks: localUnlocks },
-      { coins: account.coins, unlocks: account.unlocks },
-    )
-    // 1. Detach any current account so the writes below don't per-write push.
-    await identity.set(null)
-    // 2. Apply merged progress locally (no code set → decorator stays quiet).
-    await storage.setCoins(merged.coins)
-    for (const id of merged.unlocks) await storage.addUnlock(id)
-    // 3. Bind the new identity and push the merged snapshot exactly once.
-    await identity.set({ code: account.code, name: account.name })
-    if (playerClient) {
-      try {
-        await playerClient.sync(account.code, merged.coins, merged.unlocks)
-      } catch {
-        // Offline: local is authoritative; the next coin/unlock change re-pushes.
-      }
-    }
-    shell.setPlayer({ name: account.name, code: account.code })
-    await refreshEconomy()
-  }
-  adoptInFlight = adoptInFlight.then(run, run)
-  return adoptInFlight
-}
-
-function handleCreatePlayer(name: string): Promise<AccountActionResult> {
-  if (!playerClient) return Promise.resolve({ ok: false, reason: 'network' })
-  return playerClient
-    .create(name)
-    .then(async (created) => {
-      // Seed the new account with whatever local (anonymous) progress exists.
-      await adoptAccount({ ...created })
-      return { ok: true as const, name: created.name }
-    })
-    .catch((): AccountActionResult => ({ ok: false, reason: 'network' }))
-}
-
-function handleRestorePlayer(code: string): Promise<AccountActionResult> {
-  if (!playerClient) return Promise.resolve({ ok: false, reason: 'network' })
-  const normalized = normalizeCode(code)
-  if (!CODE_PATTERN.test(normalized)) {
-    return Promise.resolve({ ok: false, reason: 'invalid' })
-  }
-  return playerClient
-    .get(normalized)
-    .then(async (account): Promise<AccountActionResult> => {
-      if (!account) return { ok: false, reason: 'not-found' }
-      await adoptAccount({
-        name: account.name,
-        code: account.code,
-        coins: account.coins,
-        unlocks: account.unlocks,
-      })
-      return { ok: true, name: account.name }
-    })
-    .catch((): AccountActionResult => ({ ok: false, reason: 'network' }))
-}
-
-function handleProfileOpen(): Promise<readonly PlayerScoreView[]> {
-  const code = identity.code()
-  if (!playerClient || !code) return Promise.resolve([])
-  return playerClient
-    .get(code)
-    .then((account) =>
-      account
-        ? account.scores.map((s) => ({ modeId: s.modeId, score: s.score }))
-        : [],
-    )
-    .catch(() => [])
-}
-
-function handlePurchase(itemId: string): void {
-  void purchaseItem(storage, itemId).then((result) => {
-    if (result.ok) {
-      sound.play('purchase')
-      void refreshEconomy()
-    }
-  })
+  return themeRegistry.map((theme) => ({ id: theme.id, name: theme.name }))
 }
 
 // Menu flow: opening the menu mid-run pauses; closing it resumes only what
@@ -347,8 +213,6 @@ function handleMenuClose(): void {
 }
 
 const shell = createUiShell({
-  adapter: storage,
-  modeId: MODE_ID,
   modes: [
     { id: MODE_CLASSIC, name: 'Classic' },
     { id: MODE_LEVELS, name: 'Levels' },
@@ -359,21 +223,12 @@ const shell = createUiShell({
   onMenuClose: handleMenuClose,
   themes: themeOptions(),
   activeThemeId: DEFAULT_THEME_ID,
-  shopItems: shopItemViews(),
-  onThemeSelect: (id) => {
-    if (!isThemeUnlocked(id, unlocks)) return
-    setTheme(id, true)
-  },
-  onPurchase: handlePurchase,
+  onThemeSelect: (id) => setTheme(id, true),
   onMuteToggle: toggleMute,
   onDirection: (dir) => input.pushTurn(dir),
   onTouchControlsToggle: toggleTouchControls,
   onPauseToggle: togglePause,
   onRestart: () => requestRestart(true),
-  accountsEnabled,
-  onCreatePlayer: handleCreatePlayer,
-  onRestorePlayer: handleRestorePlayer,
-  onProfileOpen: handleProfileOpen,
 })
 
 void storage.getSetting(SETTING_MUTED).then((saved) => {
@@ -391,31 +246,6 @@ void storage.getSetting(SETTING_TOUCH_CONTROLS).then((saved) => {
 void storage.getSetting(SETTING_THEME).then((saved) => {
   if (saved) setTheme(saved, false)
 })
-void refreshEconomy()
-
-// Account boot gate: hydrate the stored player, then either pull their account
-// (merging into local + refreshing) or, on very first run with accounts
-// enabled and no player yet, show the one-time welcome. Best-effort — any
-// failure leaves the game fully playable on local data.
-if (accountsEnabled) {
-  void identity.hydrate().then((player) => {
-    if (player) {
-      shell.setPlayer({ name: player.name, code: player.code })
-      if (playerClient) {
-        void playerClient
-          .get(player.code)
-          .then((account) => {
-            if (account) return adoptAccount(account)
-          })
-          .catch(() => {
-            /* offline: keep local; the sync decorator retries on next write */
-          })
-      }
-    } else {
-      shell.showWelcome()
-    }
-  })
-}
 
 void Promise.all([
   storage.getSetting(SETTING_MODE),
@@ -476,7 +306,8 @@ function buildHud(): Hud {
   }
 
   return {
-    highScore: mode.kind === 'classic' ? highScore : undefined,
+    // Both modes keep their own best, so both show one to beat.
+    highScore,
     paused: paused || waiting,
     levelLabel,
     overlayTitle,

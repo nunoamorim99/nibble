@@ -15,7 +15,7 @@ Classic and the early "evolution" themes (mono, first-color, colored-pixel) are 
 
 ## Path 2 — Snake skins + food sprites → code-generated spritesheets (NOT AI)
 This is the primary skin pipeline and it runs entirely in code, so Claude Code owns the whole process.
-- Write a small TypeScript generator under `tools/sprites/` that emits, for a theme, each segment (head, body, corner, tail) and food/coin as a PNG spritesheet + a JSON atlas.
+- Write a small TypeScript generator under `tools/sprites/` that emits, for a theme, each segment (head, body, corner, tail) and food as a PNG spritesheet + a JSON atlas.
 - Author detailed art as **SVG** (scales, eyes, gradients, glow) — it is code-editable and themeable — then rasterize to the exact grid cell size with **`sharp`**. For simple pixel skins you may draw directly with `sharp`/canvas.
 - Every theme is the SAME generator with different parameters/SVG detail, so a skin set stays internally consistent (head/body/corner/tail/food match).
 - Output transparent, grid-sized, optimized PNGs to `assets/sprites/<theme>/`.

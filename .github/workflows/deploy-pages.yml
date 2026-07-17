@@ -34,18 +34,9 @@ jobs:
 
       - run: npm run test
 
-      # The global leaderboard stays disabled unless the repo provides these
-      # (Settings -> Secrets and variables -> Actions). The anon key is a
-      # publishable client key by design, but a secret keeps it out of logs.
+      # Nibble is a fully offline, front-end-only game — the build needs no
+      # secrets, env vars, or backend of any kind.
       - run: npm run build
-        env:
-          VITE_LEADERBOARD_URL: ${{ vars.VITE_LEADERBOARD_URL }}
-          VITE_LEADERBOARD_ANON_KEY: ${{ secrets.VITE_LEADERBOARD_ANON_KEY }}
-          VITE_LEADERBOARD_TABLE: ${{ vars.VITE_LEADERBOARD_TABLE }}
-          # Player accounts / cross-device progress stay disabled unless the
-          # Edge Function URL is provided (reuses the anon key above). See
-          # docs/PLAYER_ACCOUNTS.md.
-          VITE_PLAYER_API_URL: ${{ vars.VITE_PLAYER_API_URL }}
 
       - uses: actions/configure-pages@v5
         with:

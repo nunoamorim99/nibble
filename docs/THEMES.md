@@ -1,6 +1,6 @@
 # THEMES.md — the Snake evolution ladder
 
-Themes in Nibble are a data-driven "history of Snake" progression. Each is unlocked in order with coins, and each is built one of three ways:
+Themes in Nibble are a data-driven "history of Snake" progression, ordered oldest-look to newest. All of them are available from the start — the ladder is a narrative ordering in the theme picker, not an unlock gate. Each theme is built one of three ways:
 
 - **Palette / procedural** — a tokens object (colors, cell style, glow). The renderer draws everything in code. **No image assets.**
 - **Skin spritesheet** — the `art-pipeline` agent code-generates the segment + food sprites from **SVG**, rasterized with **`sharp`** into `assets/sprites/<theme>/`. **No image model.**
