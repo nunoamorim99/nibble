@@ -1,27 +1,22 @@
 /**
  * UI shell — the DOM chrome around the canvas: a full-viewport main-menu
  * screen (boot lands here), a slim in-game control bar (menu/pause/new-game/
- * sound/coins/level-info), a themes panel, a shop panel, a leaderboard
- * overlay, and a score-submission dialog shown on game over. Built entirely
- * with `document.createElement` calls appended under `#ui-root`;
- * `index.html` stays declarative-minimal.
+ * sound/level-info), and a themes panel. Built entirely with
+ * `document.createElement` calls appended under `#ui-root`; `index.html`
+ * stays declarative-minimal.
  *
- * Talks to persistence ONLY through the injected `PersistenceAdapter` — no
- * direct storage access, no engine imports beyond types re-exported from
- * `src/engine` elsewhere in this layer. Play/pause/restart/theme-select
- * /purchase/mute-toggle/menu-open/menu-close are forwarded as abstract
- * callbacks; this module never touches engine, level, theme-registry,
- * economy, or audio internals itself — `ModeOption`, `ThemeOption`, and
- * `ShopItemView` are plain display data owned by this layer, and the sound
- * control only reports clicks: the caller (main.ts) owns the actual
- * `SoundPlayer` and any persisted mute preference. The shell knows nothing
- * about what a mode *means* (level config, rules, engine wiring) — it only
- * renders the option list and reports the selected id upward via `onPlay`;
- * the caller owns starting/restarting games. The shell decides nothing about
- * affordability, ownership, or unlocks either: it renders exactly the data
- * it is given (via constructor opts or `updateThemes` / `updateShop` /
- * `setCoins` / `setActiveMode` / `setLevelInfo` / `setMuted`) and reports
- * clicks upward.
+ * Nibble is offline-only and single-device: this layer holds no reference to
+ * persistence at all (no adapter, no mode id) — it is purely display state
+ * plus abstract callbacks. Play/pause/restart/theme-select/mute-toggle/
+ * menu-open/menu-close are forwarded as abstract callbacks; this module
+ * never touches engine, level, theme-registry, or audio internals itself —
+ * `ModeOption` and `ThemeOption` are plain display data owned by this layer,
+ * and the sound control only reports clicks: the caller (main.ts) owns the
+ * actual `SoundPlayer` and any persisted mute preference. The shell knows
+ * nothing about what a mode *means* (level config, rules, engine wiring) —
+ * it only renders the option list and reports the selected id upward via
+ * `onPlay`; the caller owns starting/restarting games. Every theme is
+ * unlocked and selectable — the shell has no notion of locked cosmetics.
  *
  * On-screen D-pad: a `.nibble-dpad` cluster of four directional buttons,
  * hidden by default and shown via `setTouchControls(true)`. Same
@@ -37,43 +32,27 @@
  * Screen layering (all under `#ui-root`, all `position: fixed`):
  *   - the menu screen sits at z-index 5, visible by default at creation
  *     (boot lands on the menu) and toggled via `[hidden]`.
- *   - the themes/shop/leaderboard/score-submit overlays sit at z-index 10,
- *     i.e. ABOVE the menu, so choosing "Themes" etc. from the menu opens the
- *     exact same panel used from in-game, stacked on top of the menu layer.
+ *   - the themes panel sits at z-index 10, i.e. ABOVE the menu, so choosing
+ *     "Themes" from the menu opens the exact same panel used from in-game,
+ *     stacked on top of the menu layer.
  *   - the slim in-game control bar is normal flow (not fixed), matching the
  *     canvas width, and is only meaningful while the menu is hidden.
  *
- * Accessibility: every button carries an `aria-label`; the menu and every
- * overlay panel is a `role="dialog"` with `aria-modal="true"` and either
- * `aria-label` (menu) or `aria-labelledby` (panels, pointing at their
- * title). Showing the menu or opening a panel moves focus to a sensible
- * first control and traps Tab within it; Escape closes/hides it (and stops
- * the keydown from bubbling to the page-level pause handler in `input.ts`);
- * closing restores focus to whichever control opened it. The coin counter
- * and level-info label are `aria-live="polite"` so balance/level changes
- * are announced.
+ * Accessibility: every button carries an `aria-label`; the menu and the
+ * themes panel are `role="dialog"` with `aria-modal="true"` and either
+ * `aria-label` (menu) or `aria-labelledby` (panel, pointing at its title).
+ * Showing the menu or opening the panel moves focus to a sensible first
+ * control and traps Tab within it; Escape closes/hides it (and stops the
+ * keydown from bubbling to the page-level pause handler in `input.ts`);
+ * closing restores focus to whichever control opened it. The level-info
+ * label is `aria-live="polite"` so level changes are announced.
  */
-import { REMOTE_LEADERBOARD } from '../data'
-import type { LeaderboardEntry, PersistenceAdapter } from '../data'
 
 const STYLE_ELEMENT_ID = 'nibble-ui-style'
-/** Max player-name length. MUST match the Supabase `check (char_length(name)
- * between 1 and 12)` constraint in docs/REMOTE_LEADERBOARD.md — a longer name
- * here would be rejected server-side and silently fall back to a local-only
- * save. The `between 1 and ...` lower bound is always satisfied because
- * `submitHandler` substitutes DEFAULT_NAME for empty input. */
-const MAX_NAME_LENGTH = 12
-const DEFAULT_NAME = 'Player'
-const LOCK_MARKER = '\u{1F512}'
-/** How many leaderboard rows to fetch per infinite-scroll page. */
-const LEADERBOARD_PAGE_SIZE = 25
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 /** Menu backdrop artwork generated by the art-pipeline agent; missing file falls back to the CSS background-color below (no JS load check needed). */
 const MENU_BACKDROP_URL = `${import.meta.env.BASE_URL}assets/backgrounds/menu/bg.png`
-
-/** Remembers the last-used name for the lifetime of the module/session. */
-let lastName = DEFAULT_NAME
 
 /** Display-only mode entry for the menu's PLAY rows. Opaque id to this layer. */
 export interface ModeOption {
@@ -85,32 +64,7 @@ export interface ModeOption {
 export interface ThemeOption {
   readonly id: string
   readonly name: string
-  /** When true, render with a lock marker; clicking the row does NOT call onThemeSelect. */
-  readonly locked?: boolean
 }
-
-/** Display-only shop entry for the shop panel. */
-export interface ShopItemView {
-  readonly id: string
-  readonly name: string
-  readonly price: number
-  readonly owned: boolean
-}
-
-/** Display-only account score row for the Profile page's "your scores" list. */
-export interface PlayerScoreView {
-  readonly modeId: string
-  readonly score: number
-}
-
-/**
- * Result of an account create/restore attempt, reported back to the shell so
- * its overlay can render success vs. an inline error WITHOUT the shell knowing
- * anything about networking. `main.ts` owns the actual API calls.
- */
-export type AccountActionResult =
-  | { readonly ok: true; readonly name: string }
-  | { readonly ok: false; readonly reason: 'not-found' | 'network' | 'invalid' }
 
 /**
  * Structurally identical to the engine's `Direction` — declared locally so
@@ -128,24 +82,12 @@ export interface UiShell {
   setActiveMode(id: string): void
   /** Set/replace the small non-interactive level-info bar label (e.g. "LV 3/8"); null hides it. */
   setLevelInfo(text: string | null): void
-  /** Update the coin counter in the control bar. */
-  setCoins(balance: number): void
   /** Reflect mute state on the sound control (e.g. "SOUND: ON/OFF"), in both the bar and the menu. Caller owns the SoundPlayer + persistence. */
   setMuted(muted: boolean): void
   /** Show/hide the on-screen D-pad and sync the menu's "TOUCH PAD: ON/OFF" label. Caller (main.ts) owns the persisted preference. */
   setTouchControls(enabled: boolean): void
   /** Replace the theme list; re-renders rows (open or not) and preserves the active marker. */
   updateThemes(themes: readonly ThemeOption[]): void
-  /** Replace shop item states; re-renders in place if the shop panel is open. */
-  updateShop(items: readonly ShopItemView[]): void
-  /** Game over with a positive score: open the initials-submit dialog. */
-  promptScoreSubmit(score: number): void
-  /** Reflect the current player (name + code) for the Profile page. `null`
-   * means "no account" (accounts disabled, or not yet created). */
-  setPlayer(player: { name: string; code: string } | null): void
-  /** Open the one-time first-run welcome overlay (name entry / restore). Only
-   * meaningful when accounts are enabled; main.ts gates it. */
-  showWelcome(): void
   /** Programmatic open of the main menu screen. Does NOT fire onMenuOpen (that's reserved for the in-game MENU button). */
   showMenu(): void
   /** Remove all DOM this shell created and detach listeners. */
@@ -153,15 +95,11 @@ export interface UiShell {
 }
 
 export function createUiShell(opts: {
-  adapter: PersistenceAdapter
-  modeId: string
   modes: readonly ModeOption[]
   activeModeId: string
   themes: readonly ThemeOption[]
   activeThemeId: string
-  shopItems: readonly ShopItemView[]
   onThemeSelect(id: string): void
-  onPurchase(itemId: string): void
   onPauseToggle(): void
   onRestart(): void
   /** User clicked the sound control (bar or menu). The shell shows the control only; main.ts owns the SoundPlayer + persisted preference. */
@@ -176,22 +114,9 @@ export function createUiShell(opts: {
   onMenuOpen(): void
   /** The menu was dismissed without choosing (Escape / close control / RESUME). main.ts resumes. */
   onMenuClose(): void
-  /** Whether the player-accounts feature is configured. When false, the shell
-   * shows no PROFILE button and the welcome/profile/restore overlays are inert. */
-  accountsEnabled?: boolean
-  /** First-run "Create" submit: create an account for `name`. main.ts owns the
-   * network call; the shell only renders the returned success/error. */
-  onCreatePlayer?(name: string): Promise<AccountActionResult>
-  /** Restore submit: adopt the account identified by `code`. */
-  onRestorePlayer?(code: string): Promise<AccountActionResult>
-  /** Profile opened: fetch the current player's own scores (best-first). */
-  onProfileOpen?(): Promise<readonly PlayerScoreView[]>
 }): UiShell {
   const {
-    adapter,
-    modeId,
     onThemeSelect,
-    onPurchase,
     onPauseToggle,
     onRestart,
     onMuteToggle,
@@ -201,13 +126,8 @@ export function createUiShell(opts: {
     onMenuOpen,
     onMenuClose,
   } = opts
-  const accountsEnabled = opts.accountsEnabled ?? false
-  const onCreatePlayer = opts.onCreatePlayer ?? (async () => ({ ok: false, reason: 'network' as const }))
-  const onRestorePlayer = opts.onRestorePlayer ?? (async () => ({ ok: false, reason: 'network' as const }))
-  const onProfileOpen = opts.onProfileOpen ?? (async () => [])
   let modes = opts.modes
   let themes = opts.themes
-  let shopItems = opts.shopItems
   let activeModeId = opts.activeModeId
   let activeThemeId = opts.activeThemeId
 
@@ -284,9 +204,9 @@ export function createUiShell(opts: {
   }
 
   // --- main menu screen ---------------------------------------------------
-  // Full-viewport layer, z-index BELOW the panels (5 vs. their 10) so
-  // Themes/Shop/Leaderboard stack visually above the menu and return focus
-  // to the menu row that opened them. Visible by default: boot lands here.
+  // Full-viewport layer, z-index BELOW the themes panel (5 vs. its 10) so
+  // Themes stacks visually above the menu and returns focus to the menu row
+  // that opened it. Visible by default: boot lands here.
   const menuLayer = document.createElement('div')
   menuLayer.className = 'nibble-menu'
   menuLayer.setAttribute('role', 'dialog')
@@ -332,7 +252,7 @@ export function createUiShell(opts: {
         hideMenu()
         onPlay(mode.id)
       })
-      // Insert PLAY rows before the fixed THEMES/SHOP/LEADERBOARD/SOUND block.
+      // Insert PLAY rows before the fixed THEMES/SOUND block.
       menuButtons.insertBefore(button, menuSecondaryButtons)
       menuModeButtons.set(mode.id, button)
     })
@@ -367,30 +287,6 @@ export function createUiShell(opts: {
   menuThemesButton.setAttribute('aria-label', 'Choose theme')
   menuThemesButton.addEventListener('click', () => openThemes(menuThemesButton))
 
-  const menuShopButton = document.createElement('button')
-  menuShopButton.type = 'button'
-  menuShopButton.className = 'nibble-menu-btn'
-  menuShopButton.textContent = 'SHOP'
-  menuShopButton.setAttribute('aria-label', 'Open shop')
-  menuShopButton.addEventListener('click', () => openShop(menuShopButton))
-
-  const menuLeaderboardButton = document.createElement('button')
-  menuLeaderboardButton.type = 'button'
-  menuLeaderboardButton.className = 'nibble-menu-btn'
-  menuLeaderboardButton.textContent = 'LEADERBOARD'
-  menuLeaderboardButton.setAttribute('aria-label', 'Open leaderboard')
-  menuLeaderboardButton.addEventListener('click', () => openLeaderboard(menuLeaderboardButton))
-
-  // PROFILE row: only present when accounts are configured. Created
-  // unconditionally (so `openProfile` etc. can reference it) but only appended
-  // to the menu when `accountsEnabled`.
-  const menuProfileButton = document.createElement('button')
-  menuProfileButton.type = 'button'
-  menuProfileButton.className = 'nibble-menu-btn'
-  menuProfileButton.textContent = 'PROFILE'
-  menuProfileButton.setAttribute('aria-label', 'Open profile')
-  menuProfileButton.addEventListener('click', () => openProfile(menuProfileButton))
-
   const menuSoundButton = document.createElement('button')
   menuSoundButton.type = 'button'
   menuSoundButton.className = 'nibble-menu-btn'
@@ -402,17 +298,7 @@ export function createUiShell(opts: {
   menuTouchPadButton.addEventListener('click', () => onTouchControlsToggle())
 
   menuButtons.append(menuSecondaryButtons)
-  menuButtons.append(
-    menuThemesButton,
-    menuShopButton,
-    menuLeaderboardButton,
-    menuSoundButton,
-    menuTouchPadButton,
-  )
-  // Insert PROFILE just under LEADERBOARD, only when the feature is on.
-  if (accountsEnabled) {
-    menuButtons.insertBefore(menuProfileButton, menuSoundButton)
-  }
+  menuButtons.append(menuThemesButton, menuSoundButton, menuTouchPadButton)
 
   const menuResumeButton = document.createElement('button')
   menuResumeButton.type = 'button'
@@ -479,9 +365,8 @@ export function createUiShell(opts: {
   }
 
   // --- control bar ---------------------------------------------------
-  // Declutered: the menu now owns navigation (mode choice, themes, shop,
-  // leaderboard). The in-game bar is just MENU | Pause | New Game | Sound |
-  // coins | level-info.
+  // Declutered: the menu now owns navigation (mode choice, themes). The
+  // in-game bar is just MENU | Pause | New Game | Sound | level-info.
   const bar = document.createElement('div')
   bar.className = 'nibble-bar'
 
@@ -514,18 +399,13 @@ export function createUiShell(opts: {
   restartButton.setAttribute('aria-label', 'Start new game')
   restartButton.addEventListener('click', () => onRestart())
 
-  const coinCounter = document.createElement('span')
-  coinCounter.className = 'nibble-coin-counter'
-  coinCounter.setAttribute('aria-label', 'Coin balance')
-  coinCounter.setAttribute('aria-live', 'polite')
-
   const levelInfoLabel = document.createElement('span')
   levelInfoLabel.className = 'nibble-level-info'
   levelInfoLabel.setAttribute('aria-label', 'Level info')
   levelInfoLabel.setAttribute('aria-live', 'polite')
   levelInfoLabel.hidden = true
 
-  bar.append(menuButton, pauseButton, soundButton, restartButton, coinCounter, levelInfoLabel)
+  bar.append(menuButton, pauseButton, soundButton, restartButton, levelInfoLabel)
   root.appendChild(bar)
 
   // --- on-screen D-pad -------------------------------------------------
@@ -600,185 +480,6 @@ export function createUiShell(opts: {
   }
   syncTouchPadLabel(false)
 
-  function renderCoinCounter(balance: number): void {
-    coinCounter.textContent = `◉ ${balance}`
-  }
-  renderCoinCounter(0)
-
-  // --- leaderboard page (full-screen overlay) ------------------------
-  // A full-viewport "page" rather than the small centered panel: it fills the
-  // screen and scrolls, showing many entries with infinite scroll. It still
-  // rides the shared `makeDialog` machinery (Escape/close, focus trap, focus
-  // restore) — `nibble-panel-full` is only a visual modifier.
-  const leaderboardOverlay = document.createElement('div')
-  leaderboardOverlay.className = 'nibble-overlay'
-  leaderboardOverlay.hidden = true
-
-  const leaderboardPanel = document.createElement('div')
-  leaderboardPanel.className = 'nibble-panel nibble-panel-full'
-
-  const leaderboardTitle = document.createElement('h2')
-  leaderboardTitle.className = 'nibble-panel-title'
-  leaderboardTitle.textContent = 'Leaderboard'
-
-  // Shown only when a remote was expected but we're serving on-device scores
-  // (network/backend failure). Hidden when the remote succeeds, and hidden
-  // when no remote is configured at all (local-only is the normal mode then).
-  const leaderboardNotice = document.createElement('p')
-  leaderboardNotice.className = 'nibble-leaderboard-notice'
-  leaderboardNotice.setAttribute('role', 'status')
-  leaderboardNotice.hidden = true
-  leaderboardNotice.textContent =
-    "Couldn't reach the global leaderboard — showing scores saved on this device."
-
-  const leaderboardList = document.createElement('ol')
-  leaderboardList.className = 'nibble-leaderboard-list'
-
-  const leaderboardCloseButton = document.createElement('button')
-  leaderboardCloseButton.type = 'button'
-  leaderboardCloseButton.className = 'nibble-btn'
-  leaderboardCloseButton.textContent = 'Close'
-  leaderboardCloseButton.setAttribute('aria-label', 'Close leaderboard')
-  leaderboardCloseButton.addEventListener('click', () => closeLeaderboard())
-
-  leaderboardPanel.append(
-    leaderboardTitle,
-    leaderboardNotice,
-    leaderboardList,
-    leaderboardCloseButton,
-  )
-  leaderboardOverlay.appendChild(leaderboardPanel)
-  root.appendChild(leaderboardOverlay)
-
-  const leaderboardDialog = makeDialog(leaderboardOverlay, leaderboardPanel, leaderboardTitle)
-
-  // Infinite-scroll state. `generation` guards against races: opening the
-  // page (or reopening it) bumps the generation so late-arriving fetches from
-  // a previous open are ignored instead of appending stale rows.
-  let leaderboardOffset = 0
-  let leaderboardHasMore = true
-  let leaderboardLoading = false
-  let leaderboardGeneration = 0
-  let leaderboardLoadingRow: HTMLLIElement | null = null
-
-  function setLeaderboardLoadingRow(visible: boolean): void {
-    if (visible) {
-      if (!leaderboardLoadingRow) {
-        leaderboardLoadingRow = document.createElement('li')
-        leaderboardLoadingRow.className = 'nibble-leaderboard-loading'
-        leaderboardLoadingRow.textContent = 'Loading…'
-      }
-      leaderboardList.appendChild(leaderboardLoadingRow)
-    } else {
-      leaderboardLoadingRow?.remove()
-    }
-  }
-
-  function appendLeaderboardRows(entries: readonly LeaderboardEntry[]): void {
-    entries.forEach((entry) => {
-      const row = document.createElement('li')
-      row.className = 'nibble-leaderboard-row'
-
-      const rank = document.createElement('span')
-      rank.className = 'nibble-leaderboard-rank'
-      // Rank is position in the full ordered list, so derive it from how many
-      // rows precede this one rather than a per-page index.
-      rank.textContent = `${leaderboardOffset + 1}.`
-
-      const name = document.createElement('span')
-      name.className = 'nibble-leaderboard-name'
-      name.textContent = entry.name
-
-      const score = document.createElement('span')
-      score.className = 'nibble-leaderboard-score'
-      score.textContent = String(entry.score)
-
-      row.append(rank, name, score)
-      leaderboardList.appendChild(row)
-      leaderboardOffset += 1
-    })
-  }
-
-  function showLeaderboardEmpty(): void {
-    const empty = document.createElement('li')
-    empty.className = 'nibble-leaderboard-empty'
-    empty.textContent = 'No scores yet — be the first!'
-    leaderboardList.appendChild(empty)
-  }
-
-  async function loadLeaderboardPage(): Promise<void> {
-    if (leaderboardLoading || !leaderboardHasMore) return
-    leaderboardLoading = true
-    const generation = leaderboardGeneration
-    setLeaderboardLoadingRow(true)
-    try {
-      const page = await adapter.getLeaderboardPage(modeId, {
-        limit: LEADERBOARD_PAGE_SIZE,
-        offset: leaderboardOffset,
-      })
-      // A newer open happened while we were fetching — drop this result.
-      if (generation !== leaderboardGeneration) return
-      setLeaderboardLoadingRow(false)
-
-      // Surface the fallback notice only when a remote was configured (so a
-      // failure is meaningful) and we still got local data.
-      leaderboardNotice.hidden = !(REMOTE_LEADERBOARD.enabled && page.source === 'local')
-
-      const wasFirstPage = leaderboardOffset === 0
-      appendLeaderboardRows(page.entries)
-      leaderboardHasMore = page.hasMore
-      if (wasFirstPage && page.entries.length === 0) showLeaderboardEmpty()
-
-      // If the first page didn't fill the scroll viewport, there may be more
-      // rows but no scrollbar to trigger the next load — pull the next page
-      // until it scrolls or runs dry.
-      if (
-        leaderboardHasMore &&
-        leaderboardList.scrollHeight <= leaderboardList.clientHeight
-      ) {
-        leaderboardLoading = false
-        void loadLeaderboardPage()
-        return
-      }
-    } catch {
-      // getLeaderboardPage already handles remote failure via local fallback;
-      // reaching here would be a local-store failure. Stop paging quietly.
-      if (generation === leaderboardGeneration) {
-        setLeaderboardLoadingRow(false)
-        leaderboardHasMore = false
-      }
-    } finally {
-      if (generation === leaderboardGeneration) leaderboardLoading = false
-    }
-  }
-
-  function onLeaderboardScroll(): void {
-    const nearBottom =
-      leaderboardList.scrollTop + leaderboardList.clientHeight >=
-      leaderboardList.scrollHeight - 48
-    if (nearBottom) void loadLeaderboardPage()
-  }
-  leaderboardList.addEventListener('scroll', onLeaderboardScroll)
-
-  function openLeaderboard(opener: HTMLElement): void {
-    // Reset paging state for a fresh open.
-    leaderboardGeneration += 1
-    leaderboardOffset = 0
-    leaderboardHasMore = true
-    leaderboardLoading = false
-    leaderboardNotice.hidden = true
-    leaderboardList.replaceChildren()
-    leaderboardList.scrollTop = 0
-    leaderboardDialog.open(opener)
-    void loadLeaderboardPage()
-  }
-
-  function closeLeaderboard(): void {
-    // Invalidate any in-flight fetch so it can't append after close.
-    leaderboardGeneration += 1
-    leaderboardDialog.close()
-  }
-
   // --- themes panel -----------------------------------------------------
   const themesOverlay = document.createElement('div')
   themesOverlay.className = 'nibble-overlay'
@@ -828,9 +529,7 @@ export function createUiShell(opts: {
       const rowButton = document.createElement('button')
       rowButton.type = 'button'
       rowButton.className = 'nibble-theme-btn'
-      if (theme.locked) rowButton.disabled = true
       rowButton.addEventListener('click', () => {
-        if (theme.locked) return
         onThemeSelect(theme.id)
         closeThemes()
       })
@@ -848,14 +547,9 @@ export function createUiShell(opts: {
       const rowButton = themeRowButtons.get(theme.id)
       if (!rowButton) return
       const isActive = theme.id === activeThemeId
-      const label = theme.locked ? `${LOCK_MARKER} ${theme.name}` : theme.name
-      rowButton.textContent = isActive ? `▶ ${label}` : label
+      rowButton.textContent = isActive ? `▶ ${theme.name}` : theme.name
       rowButton.classList.toggle('nibble-theme-btn-active', isActive)
-      rowButton.classList.toggle('nibble-theme-btn-locked', Boolean(theme.locked))
-      rowButton.setAttribute(
-        'aria-label',
-        theme.locked ? `${theme.name}, locked` : `Select ${theme.name} theme`,
-      )
+      rowButton.setAttribute('aria-label', `Select ${theme.name} theme`)
     })
   }
 
@@ -867,540 +561,6 @@ export function createUiShell(opts: {
   function closeThemes(): void {
     themesDialog.close()
   }
-
-  // --- shop panel -------------------------------------------------------
-  const shopOverlay = document.createElement('div')
-  shopOverlay.className = 'nibble-overlay'
-  shopOverlay.hidden = true
-
-  const shopPanel = document.createElement('div')
-  shopPanel.className = 'nibble-panel'
-
-  const shopTitle = document.createElement('h2')
-  shopTitle.className = 'nibble-panel-title'
-  shopTitle.textContent = 'Shop'
-
-  const shopList = document.createElement('ol')
-  shopList.className = 'nibble-shop-list'
-
-  const shopCloseButton = document.createElement('button')
-  shopCloseButton.type = 'button'
-  shopCloseButton.className = 'nibble-btn'
-  shopCloseButton.textContent = 'Close'
-  shopCloseButton.setAttribute('aria-label', 'Close shop')
-  shopCloseButton.addEventListener('click', () => closeShop())
-
-  shopPanel.append(shopTitle, shopList, shopCloseButton)
-  shopOverlay.appendChild(shopPanel)
-  root.appendChild(shopOverlay)
-
-  const shopDialog = makeDialog(shopOverlay, shopPanel, shopTitle)
-
-  let shopOpen = false
-
-  function renderShopRows(): void {
-    shopList.replaceChildren()
-
-    if (shopItems.length === 0) {
-      const empty = document.createElement('li')
-      empty.className = 'nibble-shop-empty'
-      empty.textContent = 'No items available.'
-      shopList.appendChild(empty)
-      return
-    }
-
-    shopItems.forEach((item) => {
-      const row = document.createElement('li')
-      row.className = 'nibble-shop-row'
-
-      const name = document.createElement('span')
-      name.className = 'nibble-shop-name'
-      name.textContent = item.name
-
-      const price = document.createElement('span')
-      price.className = 'nibble-shop-price'
-      price.textContent = `◉ ${item.price}`
-
-      row.append(name, price)
-
-      if (item.owned) {
-        const ownedTag = document.createElement('span')
-        ownedTag.className = 'nibble-shop-owned'
-        ownedTag.textContent = 'OWNED'
-        row.appendChild(ownedTag)
-      } else {
-        const buyButton = document.createElement('button')
-        buyButton.type = 'button'
-        buyButton.className = 'nibble-btn nibble-shop-buy'
-        buyButton.textContent = 'Buy'
-        buyButton.setAttribute('aria-label', `Buy ${item.name} for ${item.price} coins`)
-        buyButton.addEventListener('click', () => onPurchase(item.id))
-        row.appendChild(buyButton)
-      }
-
-      shopList.appendChild(row)
-    })
-  }
-
-  function openShop(opener: HTMLElement): void {
-    shopOpen = true
-    renderShopRows()
-    shopDialog.open(opener)
-  }
-
-  function closeShop(): void {
-    shopOpen = false
-    shopDialog.close()
-  }
-
-  // --- score submit dialog --------------------------------------------
-  const submitOverlay = document.createElement('div')
-  submitOverlay.className = 'nibble-overlay'
-  submitOverlay.hidden = true
-
-  const submitPanel = document.createElement('div')
-  submitPanel.className = 'nibble-panel'
-
-  const submitTitle = document.createElement('h2')
-  submitTitle.className = 'nibble-panel-title'
-  submitTitle.textContent = 'Game Over'
-
-  const submitScoreLine = document.createElement('p')
-  submitScoreLine.className = 'nibble-score-line'
-
-  const submitLabel = document.createElement('label')
-  submitLabel.className = 'nibble-initials-label'
-  submitLabel.textContent = 'Enter your name'
-  submitLabel.htmlFor = 'nibble-name-input'
-
-  const nameInput = document.createElement('input')
-  nameInput.id = 'nibble-name-input'
-  nameInput.type = 'text'
-  nameInput.className = 'nibble-initials-input'
-  nameInput.maxLength = MAX_NAME_LENGTH
-  nameInput.autocomplete = 'off'
-  nameInput.spellcheck = false
-  nameInput.setAttribute('aria-label', `Your name, up to ${MAX_NAME_LENGTH} characters`)
-  submitLabel.appendChild(nameInput)
-
-  // `maxLength` already caps typed input; this guard covers paste and keeps
-  // the value within bounds. No forced uppercase now that real names (not
-  // 3-letter arcade initials) are allowed.
-  nameInput.addEventListener('input', () => {
-    if (nameInput.value.length > MAX_NAME_LENGTH) {
-      nameInput.value = nameInput.value.slice(0, MAX_NAME_LENGTH)
-    }
-  })
-  nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      submitHandler()
-    }
-  })
-
-  const submitActions = document.createElement('div')
-  submitActions.className = 'nibble-dialog-actions'
-
-  const submitButton = document.createElement('button')
-  submitButton.type = 'button'
-  submitButton.className = 'nibble-btn'
-  submitButton.textContent = 'Submit'
-  submitButton.setAttribute('aria-label', 'Submit score with this name')
-
-  const skipButton = document.createElement('button')
-  skipButton.type = 'button'
-  skipButton.className = 'nibble-btn'
-  skipButton.textContent = 'Skip'
-  skipButton.setAttribute('aria-label', 'Skip submitting score')
-  skipButton.addEventListener('click', () => closeSubmitDialog())
-
-  submitActions.append(submitButton, skipButton)
-  submitPanel.append(submitTitle, submitScoreLine, submitLabel, submitActions)
-  submitOverlay.appendChild(submitPanel)
-  root.appendChild(submitOverlay)
-
-  const submitDialog = makeDialog(submitOverlay, submitPanel, submitTitle)
-
-  let pendingScore = 0
-
-  function submitHandler(): void {
-    const typed = nameInput.value.trim().slice(0, MAX_NAME_LENGTH)
-    const name = typed || DEFAULT_NAME
-    lastName = name
-    void adapter.submitScore({
-      modeId,
-      name,
-      score: pendingScore,
-      achievedAt: Date.now(),
-    })
-    closeSubmitDialog()
-  }
-  submitButton.addEventListener('click', submitHandler)
-
-  function closeSubmitDialog(): void {
-    submitDialog.close()
-  }
-
-  // --- account: shared state + helpers --------------------------------
-  // The shell holds the current player only for display; main.ts owns the
-  // truth and pushes it via setPlayer().
-  let currentPlayer: { name: string; code: string } | null = null
-
-  /** Copy `text` to the clipboard, guarded for browsers/contexts without the
-   * async Clipboard API (falls back to selecting the text). Returns whether the
-   * programmatic copy succeeded. UI-layer browser concern only — no data/net. */
-  async function copyToClipboard(text: string): Promise<boolean> {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text)
-        return true
-      }
-    } catch {
-      // fall through to the manual-select fallback
-    }
-    return false
-  }
-
-  // --- restore overlay -------------------------------------------------
-  const restoreOverlay = document.createElement('div')
-  restoreOverlay.className = 'nibble-overlay'
-  restoreOverlay.hidden = true
-
-  const restorePanel = document.createElement('div')
-  restorePanel.className = 'nibble-panel'
-
-  const restoreTitle = document.createElement('h2')
-  restoreTitle.className = 'nibble-panel-title'
-  restoreTitle.textContent = 'Restore account'
-
-  const restoreHint = document.createElement('p')
-  restoreHint.className = 'nibble-account-hint'
-  restoreHint.textContent = 'Enter your recovery code to load your progress on this device.'
-
-  const restoreLabel = document.createElement('label')
-  restoreLabel.className = 'nibble-initials-label'
-  restoreLabel.textContent = 'Recovery code'
-  restoreLabel.htmlFor = 'nibble-restore-input'
-
-  const restoreInput = document.createElement('input')
-  restoreInput.id = 'nibble-restore-input'
-  restoreInput.type = 'text'
-  restoreInput.className = 'nibble-initials-input nibble-code-input'
-  restoreInput.autocomplete = 'off'
-  restoreInput.spellcheck = false
-  restoreInput.placeholder = 'NIBBLE-XXXX-XXXX'
-  restoreInput.setAttribute('aria-label', 'Recovery code, format NIBBLE-XXXX-XXXX')
-  restoreLabel.appendChild(restoreInput)
-  // Normalize toward the code shape as the user types (uppercase; codes never
-  // contain lowercase or spaces).
-  restoreInput.addEventListener('input', () => {
-    restoreInput.value = restoreInput.value.toUpperCase()
-  })
-
-  const restoreStatus = document.createElement('p')
-  restoreStatus.className = 'nibble-account-status'
-  restoreStatus.setAttribute('role', 'status')
-  restoreStatus.hidden = true
-
-  const restoreActions = document.createElement('div')
-  restoreActions.className = 'nibble-dialog-actions'
-
-  const restoreSubmit = document.createElement('button')
-  restoreSubmit.type = 'button'
-  restoreSubmit.className = 'nibble-btn'
-  restoreSubmit.textContent = 'Restore'
-  restoreSubmit.setAttribute('aria-label', 'Restore account with this code')
-
-  const restoreCancel = document.createElement('button')
-  restoreCancel.type = 'button'
-  restoreCancel.className = 'nibble-btn'
-  restoreCancel.textContent = 'Cancel'
-  restoreCancel.setAttribute('aria-label', 'Cancel restore')
-  restoreCancel.addEventListener('click', () => restoreDialog.close())
-
-  restoreActions.append(restoreSubmit, restoreCancel)
-  restorePanel.append(restoreTitle, restoreHint, restoreLabel, restoreStatus, restoreActions)
-  restoreOverlay.appendChild(restorePanel)
-  root.appendChild(restoreOverlay)
-
-  const restoreDialog = makeDialog(restoreOverlay, restorePanel, restoreTitle)
-
-  function setRestoreStatus(text: string | null): void {
-    if (text === null) {
-      restoreStatus.hidden = true
-      restoreStatus.textContent = ''
-      return
-    }
-    restoreStatus.hidden = false
-    restoreStatus.textContent = text
-  }
-
-  async function handleRestoreSubmit(): Promise<void> {
-    const code = restoreInput.value.trim().toUpperCase()
-    if (!code) {
-      setRestoreStatus('Enter your recovery code.')
-      return
-    }
-    restoreSubmit.disabled = true
-    setRestoreStatus('Restoring…')
-    const result = await onRestorePlayer(code)
-    restoreSubmit.disabled = false
-    if (result.ok) {
-      restoreDialog.close()
-      return
-    }
-    setRestoreStatus(
-      result.reason === 'not-found'
-        ? "That code wasn't found. Check it and try again."
-        : result.reason === 'invalid'
-          ? "That doesn't look like a valid code (NIBBLE-XXXX-XXXX)."
-          : "Couldn't reach the server. Try again in a moment.",
-    )
-  }
-  restoreSubmit.addEventListener('click', () => void handleRestoreSubmit())
-  restoreInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      void handleRestoreSubmit()
-    }
-  })
-
-  function openRestore(opener: HTMLElement | null): void {
-    setRestoreStatus(null)
-    restoreInput.value = ''
-    restoreDialog.open(opener, restoreInput)
-  }
-
-  // --- profile overlay -------------------------------------------------
-  const profileOverlay = document.createElement('div')
-  profileOverlay.className = 'nibble-overlay'
-  profileOverlay.hidden = true
-
-  const profilePanel = document.createElement('div')
-  profilePanel.className = 'nibble-panel'
-
-  const profileTitle = document.createElement('h2')
-  profileTitle.className = 'nibble-panel-title'
-  profileTitle.textContent = 'Profile'
-
-  const profileName = document.createElement('p')
-  profileName.className = 'nibble-account-name'
-
-  const profileCodeLabel = document.createElement('p')
-  profileCodeLabel.className = 'nibble-account-hint'
-  profileCodeLabel.textContent = 'Your recovery code'
-
-  const profileCodeRow = document.createElement('div')
-  profileCodeRow.className = 'nibble-code-row'
-
-  const profileCode = document.createElement('code')
-  profileCode.className = 'nibble-code-value'
-
-  const profileCopyButton = document.createElement('button')
-  profileCopyButton.type = 'button'
-  profileCopyButton.className = 'nibble-btn nibble-copy-btn'
-  profileCopyButton.textContent = 'Copy'
-  profileCopyButton.setAttribute('aria-label', 'Copy recovery code')
-  profileCopyButton.addEventListener('click', () => {
-    if (!currentPlayer) return
-    void copyToClipboard(currentPlayer.code).then((ok) => {
-      profileCopyButton.textContent = ok ? 'Copied!' : 'Press Ctrl+C'
-      if (!ok) {
-        // Manual fallback: select the code so the user can copy it themselves.
-        const range = document.createRange()
-        range.selectNodeContents(profileCode)
-        const sel = window.getSelection()
-        sel?.removeAllRanges()
-        sel?.addRange(range)
-      }
-      window.setTimeout(() => {
-        profileCopyButton.textContent = 'Copy'
-      }, 2000)
-    })
-  })
-
-  profileCodeRow.append(profileCode, profileCopyButton)
-
-  const profileWarning = document.createElement('p')
-  profileWarning.className = 'nibble-account-warning'
-  profileWarning.textContent =
-    'Keep this code safe — it is the only way to recover your progress on another device.'
-
-  const profileScoresTitle = document.createElement('p')
-  profileScoresTitle.className = 'nibble-account-hint'
-  profileScoresTitle.textContent = 'Your scores'
-
-  const profileScoresList = document.createElement('ol')
-  profileScoresList.className = 'nibble-leaderboard-list'
-
-  const profileRestoreButton = document.createElement('button')
-  profileRestoreButton.type = 'button'
-  profileRestoreButton.className = 'nibble-btn'
-  profileRestoreButton.textContent = 'Restore a different account'
-  profileRestoreButton.setAttribute('aria-label', 'Restore a different account')
-  profileRestoreButton.addEventListener('click', () => openRestore(profileRestoreButton))
-
-  const profileCloseButton = document.createElement('button')
-  profileCloseButton.type = 'button'
-  profileCloseButton.className = 'nibble-btn'
-  profileCloseButton.textContent = 'Close'
-  profileCloseButton.setAttribute('aria-label', 'Close profile')
-  profileCloseButton.addEventListener('click', () => profileDialog.close())
-
-  profilePanel.append(
-    profileTitle,
-    profileName,
-    profileCodeLabel,
-    profileCodeRow,
-    profileWarning,
-    profileScoresTitle,
-    profileScoresList,
-    profileRestoreButton,
-    profileCloseButton,
-  )
-  profileOverlay.appendChild(profilePanel)
-  root.appendChild(profileOverlay)
-
-  const profileDialog = makeDialog(profileOverlay, profilePanel, profileTitle)
-
-  function renderProfileScores(scores: readonly PlayerScoreView[]): void {
-    profileScoresList.replaceChildren()
-    if (scores.length === 0) {
-      const empty = document.createElement('li')
-      empty.className = 'nibble-leaderboard-empty'
-      empty.textContent = 'No scores yet.'
-      profileScoresList.appendChild(empty)
-      return
-    }
-    scores.forEach((entry, index) => {
-      const row = document.createElement('li')
-      row.className = 'nibble-leaderboard-row'
-      const rank = document.createElement('span')
-      rank.className = 'nibble-leaderboard-rank'
-      rank.textContent = `${index + 1}.`
-      const label = document.createElement('span')
-      label.className = 'nibble-leaderboard-name'
-      label.textContent = entry.modeId
-      const score = document.createElement('span')
-      score.className = 'nibble-leaderboard-score'
-      score.textContent = String(entry.score)
-      row.append(rank, label, score)
-      profileScoresList.appendChild(row)
-    })
-  }
-
-  function openProfile(opener: HTMLElement | null): void {
-    // Render what we know synchronously, then fill scores from the async fetch.
-    profileName.textContent = currentPlayer ? currentPlayer.name : ''
-    profileCode.textContent = currentPlayer ? currentPlayer.code : '—'
-    profileScoresList.replaceChildren()
-    const loading = document.createElement('li')
-    loading.className = 'nibble-leaderboard-loading'
-    loading.textContent = 'Loading…'
-    profileScoresList.appendChild(loading)
-    profileDialog.open(opener)
-    void onProfileOpen().then(
-      (scores) => renderProfileScores(scores),
-      () => renderProfileScores([]),
-    )
-  }
-
-  // --- welcome overlay (first run) ------------------------------------
-  const welcomeOverlay = document.createElement('div')
-  welcomeOverlay.className = 'nibble-overlay'
-  welcomeOverlay.hidden = true
-
-  const welcomePanel = document.createElement('div')
-  welcomePanel.className = 'nibble-panel'
-
-  const welcomeTitle = document.createElement('h2')
-  welcomeTitle.className = 'nibble-panel-title'
-  welcomeTitle.textContent = 'Welcome to Nibble'
-
-  const welcomeHint = document.createElement('p')
-  welcomeHint.className = 'nibble-account-hint'
-  welcomeHint.textContent =
-    'Pick a name to save your coins, unlocks, and scores across devices. You’ll get a recovery code to keep.'
-
-  const welcomeLabel = document.createElement('label')
-  welcomeLabel.className = 'nibble-initials-label'
-  welcomeLabel.textContent = 'Your name'
-  welcomeLabel.htmlFor = 'nibble-welcome-input'
-
-  const welcomeInput = document.createElement('input')
-  welcomeInput.id = 'nibble-welcome-input'
-  welcomeInput.type = 'text'
-  welcomeInput.className = 'nibble-initials-input'
-  welcomeInput.maxLength = MAX_NAME_LENGTH
-  welcomeInput.autocomplete = 'off'
-  welcomeInput.spellcheck = false
-  welcomeInput.setAttribute('aria-label', `Your name, up to ${MAX_NAME_LENGTH} characters`)
-  welcomeLabel.appendChild(welcomeInput)
-  welcomeInput.addEventListener('input', () => {
-    if (welcomeInput.value.length > MAX_NAME_LENGTH) {
-      welcomeInput.value = welcomeInput.value.slice(0, MAX_NAME_LENGTH)
-    }
-  })
-
-  const welcomeStatus = document.createElement('p')
-  welcomeStatus.className = 'nibble-account-status'
-  welcomeStatus.setAttribute('role', 'status')
-  welcomeStatus.hidden = true
-
-  const welcomeActions = document.createElement('div')
-  welcomeActions.className = 'nibble-dialog-actions'
-
-  const welcomeCreate = document.createElement('button')
-  welcomeCreate.type = 'button'
-  welcomeCreate.className = 'nibble-btn'
-  welcomeCreate.textContent = 'Create'
-  welcomeCreate.setAttribute('aria-label', 'Create account with this name')
-
-  const welcomeRestore = document.createElement('button')
-  welcomeRestore.type = 'button'
-  welcomeRestore.className = 'nibble-btn'
-  welcomeRestore.textContent = 'I have a code'
-  welcomeRestore.setAttribute('aria-label', 'Restore an existing account')
-  welcomeRestore.addEventListener('click', () => openRestore(welcomeRestore))
-
-  const welcomeOffline = document.createElement('button')
-  welcomeOffline.type = 'button'
-  welcomeOffline.className = 'nibble-btn nibble-btn-subtle'
-  welcomeOffline.textContent = 'Continue offline'
-  welcomeOffline.setAttribute('aria-label', 'Continue without an account')
-  welcomeOffline.addEventListener('click', () => welcomeDialog.close())
-
-  welcomeActions.append(welcomeCreate, welcomeRestore)
-  welcomePanel.append(welcomeTitle, welcomeHint, welcomeLabel, welcomeStatus, welcomeActions, welcomeOffline)
-  welcomeOverlay.appendChild(welcomePanel)
-  root.appendChild(welcomeOverlay)
-
-  const welcomeDialog = makeDialog(welcomeOverlay, welcomePanel, welcomeTitle)
-
-  async function handleWelcomeCreate(): Promise<void> {
-    const name = welcomeInput.value.trim().slice(0, MAX_NAME_LENGTH) || DEFAULT_NAME
-    welcomeCreate.disabled = true
-    welcomeStatus.hidden = false
-    welcomeStatus.textContent = 'Creating your account…'
-    const result = await onCreatePlayer(name)
-    welcomeCreate.disabled = false
-    if (result.ok) {
-      welcomeStatus.hidden = true
-      welcomeDialog.close()
-      // Surface the freshly-created code immediately so the player can save it.
-      openProfile(null)
-      return
-    }
-    welcomeStatus.textContent =
-      "Couldn't reach the server. You can continue offline and create an account later from Profile."
-  }
-  welcomeCreate.addEventListener('click', () => void handleWelcomeCreate())
-  welcomeInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      void handleWelcomeCreate()
-    }
-  })
 
   return {
     setPaused(paused) {
@@ -1428,10 +588,6 @@ export function createUiShell(opts: {
       levelInfoLabel.textContent = text
     },
 
-    setCoins(balance) {
-      renderCoinCounter(balance)
-    },
-
     setMuted(muted) {
       syncSoundLabel(muted)
     },
@@ -1446,32 +602,6 @@ export function createUiShell(opts: {
       if (!themesOverlay.hidden) renderThemeRows()
     },
 
-    updateShop(items) {
-      shopItems = items
-      if (shopOpen) renderShopRows()
-    },
-
-    promptScoreSubmit(score) {
-      pendingScore = score
-      submitScoreLine.textContent = `Score: ${score}`
-      nameInput.value = lastName
-      submitDialog.open(null, nameInput)
-      nameInput.select()
-    },
-
-    setPlayer(player) {
-      currentPlayer = player
-      // Keep the score-submit default name aligned with the account name.
-      if (player) lastName = player.name
-    },
-
-    showWelcome() {
-      if (!accountsEnabled) return
-      welcomeStatus.hidden = true
-      welcomeInput.value = currentPlayer?.name ?? ''
-      welcomeDialog.open(null, welcomeInput)
-    },
-
     showMenu() {
       displayMenu(null)
     },
@@ -1480,19 +610,8 @@ export function createUiShell(opts: {
       bar.remove()
       dpad.remove()
       document.documentElement.classList.remove('nibble-touchpad-on')
-      // Explicitly drop the infinite-scroll listener before detaching the
-      // overlay — its closure holds the adapter + paging state, so removing
-      // it makes the teardown unambiguous rather than relying on GC of the
-      // detached subtree.
-      leaderboardList.removeEventListener('scroll', onLeaderboardScroll)
       menuLayer.remove()
-      leaderboardOverlay.remove()
       themesOverlay.remove()
-      shopOverlay.remove()
-      submitOverlay.remove()
-      welcomeOverlay.remove()
-      profileOverlay.remove()
-      restoreOverlay.remove()
     },
   }
 }
@@ -1551,21 +670,6 @@ function injectStyles(): void {
     .nibble-btn[aria-pressed='false'] {
       opacity: 0.75;
     }
-    .nibble-coin-counter {
-      display: inline-flex;
-      align-items: center;
-      background: #1a1c16;
-      color: #e8f0c4;
-      border: 1px solid #c4cfa1;
-      border-radius: 2px;
-      padding: 0.4rem 0.75rem;
-      font-size: 0.85rem;
-      letter-spacing: 0.05em;
-      user-select: none;
-      min-height: 44px;
-      box-sizing: border-box;
-      white-space: nowrap;
-    }
     .nibble-level-info {
       display: inline-flex;
       align-items: center;
@@ -1589,7 +693,6 @@ function injectStyles(): void {
         padding: 0.35rem 0.55rem;
         font-size: 0.75rem;
       }
-      .nibble-coin-counter,
       .nibble-level-info {
         padding: 0.35rem 0.5rem;
         font-size: 0.75rem;
@@ -1847,139 +950,12 @@ function injectStyles(): void {
         margin: 0.5rem auto;
       }
     }
-    /* Full-screen "page" variant (leaderboard): fill the viewport and let the
-       inner list take all remaining height so it scrolls as one long page,
-       instead of the small auto-sized centered box. */
-    .nibble-panel-full {
-      max-width: min(96vw, 560px);
-      width: 100%;
-      height: 92vh;
-      height: 92dvh;
-      max-height: none;
-    }
-    @media (max-height: 480px) {
-      .nibble-panel-full {
-        margin: 0.5rem auto;
-      }
-    }
     .nibble-panel-title {
       margin: 0;
       font-size: 1rem;
       text-transform: uppercase;
       letter-spacing: 0.1em;
       text-align: center;
-    }
-    .nibble-leaderboard-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      max-height: 40vh;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-    /* Inside the full-screen page, the list is the flex child that grows to
-       fill the panel and owns the scroll — no 40vh cap. */
-    .nibble-panel-full .nibble-leaderboard-list {
-      flex: 1 1 auto;
-      max-height: none;
-      min-height: 0;
-    }
-    .nibble-leaderboard-row {
-      display: grid;
-      grid-template-columns: 2.75rem 1fr auto;
-      gap: 0.5rem;
-      padding: 0.15rem 0;
-    }
-    .nibble-leaderboard-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .nibble-leaderboard-score {
-      font-variant-numeric: tabular-nums;
-    }
-    .nibble-leaderboard-empty,
-    .nibble-leaderboard-loading {
-      text-align: center;
-      opacity: 0.7;
-      padding: 0.5rem 0;
-    }
-    .nibble-leaderboard-notice {
-      margin: 0;
-      padding: 0.5rem 0.6rem;
-      border: 1px solid #6f5a2a;
-      border-radius: 3px;
-      background: #2a2413;
-      color: #e6d38a;
-      font-size: 0.8rem;
-      text-align: center;
-    }
-    /* --- account overlays (welcome / profile / restore) --- */
-    .nibble-account-hint {
-      margin: 0;
-      font-size: 0.85rem;
-      opacity: 0.85;
-      text-align: center;
-      line-height: 1.4;
-    }
-    .nibble-account-name {
-      margin: 0;
-      font-size: 1.1rem;
-      text-align: center;
-    }
-    .nibble-account-warning {
-      margin: 0;
-      padding: 0.5rem 0.6rem;
-      border: 1px solid #6f5a2a;
-      border-radius: 3px;
-      background: #2a2413;
-      color: #e6d38a;
-      font-size: 0.78rem;
-      text-align: center;
-      line-height: 1.4;
-    }
-    .nibble-account-status {
-      margin: 0;
-      font-size: 0.8rem;
-      text-align: center;
-      opacity: 0.9;
-    }
-    .nibble-code-row {
-      display: flex;
-      gap: 0.5rem;
-      align-items: stretch;
-    }
-    .nibble-code-value {
-      flex: 1 1 auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #1a1c16;
-      border: 1px solid #c4cfa1;
-      border-radius: 2px;
-      padding: 0.4rem 0.6rem;
-      font-family: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
-      font-size: 1.1rem;
-      letter-spacing: 0.12em;
-      user-select: all;
-      -webkit-user-select: all;
-      overflow-wrap: anywhere;
-    }
-    .nibble-copy-btn {
-      flex: 0 0 auto;
-    }
-    .nibble-code-input {
-      /* Codes are typed uppercase; keep them wide enough for NIBBLE-XXXX-XXXX. */
-      max-width: none;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-    .nibble-btn-subtle {
-      opacity: 0.75;
-      font-size: 0.85rem;
     }
     .nibble-themes-list {
       list-style: none;
@@ -2028,100 +1004,6 @@ function injectStyles(): void {
       border-color: #e8f0c4;
       color: #e8f0c4;
       font-weight: bold;
-    }
-    .nibble-theme-btn-locked {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-    .nibble-theme-btn-locked:hover,
-    .nibble-theme-btn-locked:focus-visible {
-      background: #1a1c16;
-    }
-    .nibble-shop-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0.4rem;
-      max-height: 40vh;
-      overflow-y: auto;
-    }
-    .nibble-shop-row {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      border: 1px solid #c4cfa1;
-      border-radius: 2px;
-      padding: 0.4rem 0.6rem;
-    }
-    .nibble-shop-name {
-      flex: 1;
-      font-size: 0.85rem;
-      letter-spacing: 0.05em;
-    }
-    .nibble-shop-price {
-      font-size: 0.85rem;
-      color: #e8f0c4;
-      white-space: nowrap;
-    }
-    .nibble-shop-owned {
-      font-size: 0.75rem;
-      letter-spacing: 0.08em;
-      color: #1a1c16;
-      background: #c4cfa1;
-      border-radius: 2px;
-      padding: 0.3rem 0.5rem;
-      white-space: nowrap;
-    }
-    .nibble-shop-buy {
-      padding: 0.3rem 0.6rem;
-      font-size: 0.75rem;
-    }
-    .nibble-shop-empty {
-      text-align: center;
-      opacity: 0.7;
-      padding: 0.5rem 0;
-    }
-    .nibble-score-line {
-      margin: 0;
-      text-align: center;
-      font-size: 1.1rem;
-    }
-    .nibble-initials-label {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      align-items: center;
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .nibble-initials-input {
-      background: #1a1c16;
-      color: #c4cfa1;
-      border: 1px solid #c4cfa1;
-      border-radius: 2px;
-      font: inherit;
-      /* Must stay >= 16px: iOS Safari auto-zooms the whole page on focusing
-         any text input with a computed font-size below 16px. 1.25rem (20px
-         at the default root size) clears that floor; the narrow-phone media
-         query below must never shrink this rule. */
-      font-size: 1.25rem;
-      letter-spacing: 0.05em;
-      text-align: center;
-      /* Names, not arcade initials: no forced uppercase, wide enough for the
-         12-char max without overflowing a narrow phone panel. */
-      width: 100%;
-      max-width: 14ch;
-      padding: 0.25rem 0.5rem;
-      min-height: 44px;
-      box-sizing: border-box;
-    }
-    .nibble-dialog-actions {
-      display: flex;
-      gap: 0.5rem;
-      justify-content: center;
     }
     @media (prefers-reduced-motion: no-preference) {
       .nibble-btn,

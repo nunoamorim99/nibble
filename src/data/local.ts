@@ -20,48 +20,38 @@
  *
  *   - `kv` store — flat key/value records, keyed by a fixed string. Holds:
  *       - `highscore:<modeId>` -> number
- *       - `coins`              -> number
- *       - `unlocks`            -> string[] (cosmetic ids)
  *       - `setting:<key>`      -> string (opaque UI/app settings, e.g.
  *                                 the selected theme id)
  *
  * `setting:<key>` reuses the `kv` store under its own key namespace — no
- * new object store, so no `DB_VERSION` bump was needed to add it.
- *   - `leaderboard` store — one record per submitted entry, autoincrement
- *     primary key `id`, with an index on `modeId` for `getLeaderboard`
- *     lookups.
+ * separate object store.
+ *
+ * Version history
+ * ---------------
+ *  - v1: `kv` store + a `leaderboard` store (one row per submitted score,
+ *    indexed by `modeId`), from when the game had a shared leaderboard.
+ *  - v2: `leaderboard` store dropped. The game is offline-only and keeps just
+ *    a personal best per mode, which lives in `kv` under `highscore:<modeId>`.
+ *    Upgrading players keep their high scores; their old leaderboard rows are
+ *    deleted with the store. The now-unused `coins`/`unlocks`/`setting:player:current`
+ *    keys are left in `kv` — they are inert, and deleting them would cost a
+ *    migration pass for no behavioral gain.
  *
  * No engine imports, no DOM beyond `indexedDB` itself, no UI.
  */
-import type {
-  LeaderboardEntry,
-  LeaderboardPage,
-  PersistenceAdapter,
-} from './adapter'
+import type { PersistenceAdapter } from './adapter'
 import { createMemoryAdapter } from './memory'
 
 const DB_NAME = 'nibble'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 const KV_STORE = 'kv'
-const LEADERBOARD_STORE = 'leaderboard'
-const LEADERBOARD_MODE_INDEX = 'modeId'
+/** Dropped in v2; named here only so the upgrade can delete it. */
+const LEGACY_LEADERBOARD_STORE = 'leaderboard'
 
-const COINS_KEY = 'coins'
-const UNLOCKS_KEY = 'unlocks'
 const highScoreKey = (modeId: string): string => `highscore:${modeId}`
-// New key namespace within the existing `kv` store — see schema comment
-// above. Adding this needed no `onupgradeneeded` branch and no `DB_VERSION`
-// bump because it is not a new store, just new keys in an existing one.
+// Key namespace within the existing `kv` store — see schema comment above.
 const settingKey = (key: string): string => `setting:${key}`
-
-const DEFAULT_LEADERBOARD_LIMIT = 10
-const DEFAULT_PAGE_LIMIT = 25
-
-/** Shape of a row in `leaderboard`; IndexedDB assigns `id` on insert. */
-interface StoredLeaderboardEntry extends LeaderboardEntry {
-  readonly id?: number
-}
 
 /** Wrap an `IDBRequest` in a promise settling on `success`/`error`. */
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -88,20 +78,14 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = () => {
       const db = request.result
-      // v0 -> v1: initial schema. Future migrations add
-      // `if (event.oldVersion < N)` branches here rather than recreating
-      // stores destructively.
+      // v0 -> v1: initial schema.
       if (!db.objectStoreNames.contains(KV_STORE)) {
         db.createObjectStore(KV_STORE)
       }
-      if (!db.objectStoreNames.contains(LEADERBOARD_STORE)) {
-        const leaderboardStore = db.createObjectStore(LEADERBOARD_STORE, {
-          keyPath: 'id',
-          autoIncrement: true,
-        })
-        leaderboardStore.createIndex(LEADERBOARD_MODE_INDEX, 'modeId', {
-          unique: false,
-        })
+      // v1 -> v2: the leaderboard is gone. Drop the store if this database was
+      // created back when it existed; `kv` (and every high score in it) stays.
+      if (db.objectStoreNames.contains(LEGACY_LEADERBOARD_STORE)) {
+        db.deleteObjectStore(LEGACY_LEADERBOARD_STORE)
       }
     }
 
@@ -113,10 +97,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 /** Read one value from `kv` by key, or `undefined` if absent. */
-async function kvGet<T>(
-  db: IDBDatabase,
-  key: string,
-): Promise<T | undefined> {
+async function kvGet<T>(db: IDBDatabase, key: string): Promise<T | undefined> {
   const tx = db.transaction(KV_STORE, 'readonly')
   const value = await requestToPromise<T | undefined>(
     tx.objectStore(KV_STORE).get(key),
@@ -132,27 +113,12 @@ async function kvSet<T>(db: IDBDatabase, key: string, value: T): Promise<void> {
   await transactionDone(tx)
 }
 
-async function getHighScoreFromDb(db: IDBDatabase, modeId: string): Promise<number> {
+async function getHighScoreFromDb(
+  db: IDBDatabase,
+  modeId: string,
+): Promise<number> {
   const score = await kvGet<number>(db, highScoreKey(modeId))
   return score ?? 0
-}
-
-async function getCoinsFromDb(db: IDBDatabase): Promise<number> {
-  const coins = await kvGet<number>(db, COINS_KEY)
-  return coins ?? 0
-}
-
-async function getUnlocksFromDb(db: IDBDatabase): Promise<readonly string[]> {
-  const unlocks = await kvGet<string[]>(db, UNLOCKS_KEY)
-  return unlocks ?? []
-}
-
-async function addUnlockToDb(db: IDBDatabase, id: string): Promise<void> {
-  const unlocks = await kvGet<string[]>(db, UNLOCKS_KEY)
-  const set = new Set(unlocks ?? [])
-  if (set.has(id)) return
-  set.add(id)
-  await kvSet(db, UNLOCKS_KEY, Array.from(set))
 }
 
 async function getSettingFromDb(
@@ -169,66 +135,6 @@ async function setSettingInDb(
   value: string,
 ): Promise<void> {
   await kvSet(db, settingKey(key), value)
-}
-
-async function getLeaderboardFromDb(
-  db: IDBDatabase,
-  modeId: string,
-  limit: number,
-): Promise<readonly LeaderboardEntry[]> {
-  const tx = db.transaction(LEADERBOARD_STORE, 'readonly')
-  const index = tx.objectStore(LEADERBOARD_STORE).index(LEADERBOARD_MODE_INDEX)
-  const matches = await requestToPromise<StoredLeaderboardEntry[]>(
-    index.getAll(modeId),
-  )
-  await transactionDone(tx)
-  return matches
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ modeId, name, score, achievedAt }) => ({
-      modeId,
-      name,
-      score,
-      achievedAt,
-    }))
-}
-
-async function getLeaderboardPageFromDb(
-  db: IDBDatabase,
-  modeId: string,
-  limit: number,
-  offset: number,
-): Promise<LeaderboardPage> {
-  const tx = db.transaction(LEADERBOARD_STORE, 'readonly')
-  const index = tx.objectStore(LEADERBOARD_STORE).index(LEADERBOARD_MODE_INDEX)
-  const matches = await requestToPromise<StoredLeaderboardEntry[]>(
-    index.getAll(modeId),
-  )
-  await transactionDone(tx)
-  // All rows for the mode are already in memory here, so sort once and slice
-  // the requested window; `hasMore` is exact rather than a heuristic.
-  const ranked = matches.sort((a, b) => b.score - a.score)
-  const entries = ranked
-    .slice(offset, offset + limit)
-    .map(({ modeId, name, score, achievedAt }) => ({
-      modeId,
-      name,
-      score,
-      achievedAt,
-    }))
-  return { entries, source: 'local', hasMore: offset + limit < ranked.length }
-}
-
-async function submitScoreToDb(
-  db: IDBDatabase,
-  entry: LeaderboardEntry,
-): Promise<void> {
-  // Untrusted input in the eventual remote case — see the note on
-  // `PersistenceAdapter.submitScore` in `adapter.ts`. Locally there is no
-  // server to validate against, so the entry is stored as given.
-  const tx = db.transaction(LEADERBOARD_STORE, 'readwrite')
-  tx.objectStore(LEADERBOARD_STORE).add(entry)
-  await transactionDone(tx)
 }
 
 /** Either the open database, or the in-memory adapter it fell back to. */
@@ -297,54 +203,6 @@ export function createLocalAdapter(): PersistenceAdapter {
         return backend.adapter.setHighScore(modeId, score)
       }
       await kvSet(backend.db, highScoreKey(modeId), score)
-    },
-
-    async getCoins() {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') return backend.adapter.getCoins()
-      return getCoinsFromDb(backend.db)
-    },
-
-    async setCoins(balance) {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') return backend.adapter.setCoins(balance)
-      await kvSet(backend.db, COINS_KEY, balance)
-    },
-
-    async getUnlocks() {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') return backend.adapter.getUnlocks()
-      return getUnlocksFromDb(backend.db)
-    },
-
-    async addUnlock(id) {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') return backend.adapter.addUnlock(id)
-      await addUnlockToDb(backend.db, id)
-    },
-
-    async getLeaderboard(modeId, limit = DEFAULT_LEADERBOARD_LIMIT) {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') {
-        return backend.adapter.getLeaderboard(modeId, limit)
-      }
-      return getLeaderboardFromDb(backend.db, modeId, limit)
-    },
-
-    async getLeaderboardPage(modeId, options = {}) {
-      const limit = options.limit ?? DEFAULT_PAGE_LIMIT
-      const offset = options.offset ?? 0
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') {
-        return backend.adapter.getLeaderboardPage(modeId, { limit, offset })
-      }
-      return getLeaderboardPageFromDb(backend.db, modeId, limit, offset)
-    },
-
-    async submitScore(entry) {
-      const backend = await resolveBackend()
-      if (backend.kind === 'memory') return backend.adapter.submitScore(entry)
-      await submitScoreToDb(backend.db, entry)
     },
 
     async getSetting(key) {

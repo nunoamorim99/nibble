@@ -1,6 +1,6 @@
 /**
  * Themes — data only. A theme is a tokens object (grid colors, snake-skin
- * sprite refs, food/coin sprites, background, cell style, optional sounds).
+ * sprite refs, food sprites, background, cell style, optional sounds).
  * Swapping a theme is swapping a data object; adding one never touches the
  * engine. The theme registry lives in `./registry`; sprite loading and the
  * part-resolution/particle/background-image logic that reads `sprites` /

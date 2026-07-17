@@ -2,7 +2,7 @@
 
 # 🐍 Nibble
 
-**The Nokia snake, reborn as an installable web game** — classic mode, level challenges, unlockable themes and skins, a global leaderboard, and cross-device progress.
+**The Nokia snake, reborn as an installable web game** — classic mode, level challenges, and a full set of themes to play in.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
@@ -29,11 +29,10 @@ Nibble is a from-scratch take on the game everyone played on their Nokia 3310. I
 - **Classic mode** — the original loop: eat, grow, and don't crash into yourself or the wall. Chase your high score.
 - **Level mode** — clear a target number of apples to advance. Each level layers in obstacles and a new twist.
 - **Challenge modifiers** — composable difficulty flags rather than separate game modes: 2× speed, walls-that-kill vs. wrap-around edges, and obstacle mazes. Mix and match.
-- **Themes & skins** — from the authentic monochrome pixel look to colorful and cartoon styles. Swap them freely.
-- **Coins & shop** — earn coins as you play and spend them to unlock cosmetic themes and snake skins. Cosmetic only — no pay-to-win.
-- **Global leaderboard** — a shared, Supabase-backed board every player reads and writes to, on its own full-screen page with infinite scroll. Local-first: if the network is unreachable it falls back to on-device scores and says so, so it never silently shows the wrong data.
-- **Cross-device progress** — an optional, no-login account keyed by a secret recovery code (e.g. `NIBBLE-7Q2K-9F4M`). Your coins, unlocks, and scores follow you to a new device — enter the code to restore. Player data lives behind a Supabase Edge Function, never reachable directly by the client.
+- **Themes & skins** — from the authentic monochrome pixel look to colorful and cartoon styles. All of them are unlocked from the start; swap them freely.
+- **Personal best** — each mode records your own high score on your device and shows it while you play, as the number to beat.
 - **Installable PWA** — add it to your home screen or desktop and play fully offline.
+- **No accounts, no network** — the whole game runs in your browser. Nothing to sign up for, nothing sent anywhere; your scores stay on your device.
 
 ## 🧱 Tech stack
 
@@ -44,19 +43,18 @@ Nibble is a from-scratch take on the game everyone played on their Nokia 3310. I
 | Installable app | `vite-plugin-pwa` (Workbox) |
 | Rendering | HTML5 Canvas (2D) |
 | Persistence | IndexedDB (behind a thin adapter) |
-| Online backend (optional) | Supabase — PostgREST for the leaderboard, an Edge Function for accounts |
 | Tests | Vitest |
 | Theme art (later) | Higgsfield (the classic theme is drawn in code) |
 
 ## 🏗️ Architecture
 
-Nibble is built as **five decoupled layers**. The whole feature set — modes, themes, skins, levels, the economy — stays manageable only because these layers never reach into each other's internals.
+Nibble is built as **five decoupled layers**. The whole feature set — modes, themes, skins, levels — stays manageable only because these layers never reach into each other's internals.
 
 1. **Engine** (`src/engine/`) — pure game logic: grid, snake, tick/update, collision, food, scoring, and the mode rule engine. No DOM, no canvas, fully deterministic and unit-tested.
 2. **Renderer** (`src/render/`) — reads engine state plus the active theme and draws to the canvas. Contains **zero** game rules.
 3. **Themes** (`src/themes/`) — data only. A theme is a set of tokens; swapping a theme is swapping a data object.
 4. **Levels** (`src/levels/`) — data only. Each level or challenge is a config object with modifier flags the engine reads.
-5. **Persistence & economy** (`src/data/`) — IndexedDB behind one adapter interface, ready to swap for a remote backend later.
+5. **Persistence** (`src/data/`) — IndexedDB behind one adapter interface: your personal best per mode, plus settings. Local to your device.
 
 > **The golden rule:** the engine depends on nothing above it. If a game rule lives in the renderer, it's a bug.
 
@@ -102,8 +100,8 @@ nibble/
 │  ├─ render/             # canvas rendering
 │  ├─ themes/             # theme data + registry
 │  ├─ levels/             # level/challenge config
-│  ├─ data/               # persistence, economy, leaderboard + account sync
-│  └─ ui/                 # menus, shop, leaderboard, profile, settings
+│  ├─ data/               # persistence (high scores + settings)
+│  └─ ui/                 # menus, theme select, settings
 ├─ assets/sprites/        # generated theme art
 └─ tests/                 # unit tests + playtest checklist
 ```
@@ -120,24 +118,20 @@ Once installed it launches in its own window and works without a connection.
 
 ## 🌐 Deployment
 
-Every push to `main` runs the tests, builds, and deploys to **GitHub Pages** at [nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/) via [`deploy-pages.yml`](./.github/workflows/deploy-pages.yml).
-
-Two optional backends are switched on at build time by repository Actions settings, and each stays fully local/offline when its variables are absent:
-
-- **Global leaderboard** — a `VITE_LEADERBOARD_URL` variable and a `VITE_LEADERBOARD_ANON_KEY` secret. See [`docs/REMOTE_LEADERBOARD.md`](./docs/REMOTE_LEADERBOARD.md).
-- **Cross-device accounts** — a `VITE_PLAYER_API_URL` variable (the Supabase Edge Function URL; it reuses the leaderboard anon key). Server setup — tables, RLS, the Edge Function, and the required grants — is in [`docs/PLAYER_ACCOUNTS.md`](./docs/PLAYER_ACCOUNTS.md).
+Every push to `main` runs the tests, builds, and deploys to **GitHub Pages** at [nunoamorim99.github.io/nibble](https://nunoamorim99.github.io/nibble/) via [`deploy-pages.yml`](./.github/workflows/deploy-pages.yml). Nibble is a static front-end with no backend, so the build needs no secrets, no env vars, and no configuration — a plain `npm run build` produces the whole deployable game.
 
 ## 🗺️ Roadmap
 
 Development runs in phases, each with a clear definition of done. Full detail lives in [`PROJECT_PLAN.md`](./PROJECT_PLAN.md).
 
-- **Phase 0–2** — Foundations, classic MVP, polish + PWA + local leaderboard
-- **Phase 3–4** — Theme system, coins & shop
+- **Phase 0–2** — Foundations, classic MVP, polish + PWA
+- **Phase 3–4** — Theme system
 - **Phase 5–6** — Level mode + challenges, more content & polish
-- **Phase 7** — Online services: global leaderboard (dedicated page, infinite scroll) and cross-device accounts via recovery code
-- **Phase 8** — Native app via Capacitor (reusing the web code)
+- **Phase 7** — Native app via Capacitor (reusing the web code)
 
-Phases 0–7 are done and live in the [deployed build](https://nunoamorim99.github.io/nibble/); Phase 8 is up next.
+Phases 0–6 are done and live in the [deployed build](https://nunoamorim99.github.io/nibble/); Phase 7 is up next.
+
+> **A note on scope:** earlier versions had a coin economy with a cosmetic shop, a Supabase-backed global leaderboard, and optional cross-device accounts. Those were removed — the backend they depended on isn't running, and the game is better as a thing you just open and play. Themes are now unlocked from the start, and your personal best is the score to chase. The code lives on in this repo's git history if it's ever wanted back.
 
 ## 🤖 Built with Claude Code
 
@@ -147,8 +141,8 @@ This repo is set up to be developed with [Claude Code](https://www.claude.com/pr
 |---|---|
 | `game-engine` | Core loop, movement, collision, food, mode/level rule engine |
 | `renderer-themes` | Canvas drawing and the theme system |
-| `ui-shell` | Menus, shop, leaderboard/settings screens, PWA shell |
-| `persistence-economy` | IndexedDB, scores, coins, unlocks, leaderboard adapter |
+| `ui-shell` | Menus, theme select, settings screens, PWA shell |
+| `persistence` | IndexedDB, high scores, settings |
 | `level-designer` | Level/challenge config data and difficulty balance |
 | `art-pipeline` | Generating and processing theme art via Higgsfield |
 | `qa-tester` | Engine unit tests and the playtest checklist |
